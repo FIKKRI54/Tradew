@@ -169,6 +169,19 @@ version-30 evaluator and eligible layer set. `reviewed` authorization sends the
 exact deterministic plan to one informed LLM and requires same-snapshot `AGREE`;
 it does not run or trade a blind independent plan.
 
+Research rule version 31 adds a bounded momentum-continuation path without
+weakening the existing retest path. A breakout-follow-through or pullback-
+continuation setup may arm a shallow native limit at the completed displacement
+candle's broken level/body only when the M5 candle is complete and higher-timeframe
+context remains aligned. Other setup families still require a completed M1 retest
+and rejection, including broker-side reproduction. Momentum TP1 discovery uses an
+active opposing M5-H1 zone first, then an unbroken confirmed M5-H1 pivot, and only
+when neither exists a fixed M5-ATR projection. The blind independent provider may
+propose the exact completed-M5 candle open or body midpoint under the same aligned-
+displacement rule. Deterministic validation reproduces entry, target, stop,
+reachability, freshness, and broker geometry before submission. Replay invokes the
+same version-31 evaluator and layer preflight as live deterministic execution.
+
 ### Example from the session
 
 ```text

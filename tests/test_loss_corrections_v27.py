@@ -116,7 +116,7 @@ class LossCorrectionsV27Tests(unittest.TestCase):
     def test_supported_plan_preserves_exact_entry_and_risk_tier(self):
         s, live, a, c = self.independent_case()
         p = build_independent_execution_decision(s, live, a, c)['entry_plan']
-        self.assertEqual(p['rule_version'], 'independent-auto-29')
+        self.assertEqual(p['rule_version'], 'independent-auto-30')
         self.assertEqual([x['price'] for x in p['limit_layers']], [122])
         self.assertEqual(p['risk_fraction'], .2)
         self.assertAlmostEqual(p['limit_ladder_total_risk_fraction'], .05)
@@ -138,7 +138,7 @@ class LossCorrectionsV27Tests(unittest.TestCase):
             zone = decision['chart_analysis']['active_target_zones']['BUY'][0]
             zone['sources'] = ['D1']
             zone['active_sources'] = ['D1']
-        with self.assertRaisesRegex(ValueError, 'active M5-H1 opposing zone'):
+        with self.assertRaisesRegex(ValueError, 'active zone, confirmed pivot, or 1.50 ATR'):
             build_independent_execution_decision(s, live, a, c)
 
     def test_rollover_and_new_gap_are_not_fresh_entry_context(self):

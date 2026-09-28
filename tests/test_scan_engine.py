@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from scan_engine import TIMEFRAMES, validate
 from scan_engine import (atr, pivots, floor_volume, evaluate, market_session,
-                         structure, structural_zones, opposing_targets, context_gate)
+                         structure, structural_zones, opposing_targets, context_gate,
+                         momentum_continuation_setup, momentum_pullback_zone)
 
 
 def bar(i, high, low=1, close=2):
@@ -459,7 +460,7 @@ class RulesTest(unittest.TestCase):
 
     def test_rule_version_identifies_native_pending_logic(self):
         from scan_engine import RULE_VERSION
-        self.assertEqual(RULE_VERSION, 'structure-research-30')
+        self.assertEqual(RULE_VERSION, 'structure-research-31')
 
     def test_terminal_setup_cannot_resurrect(self):
         from setup_tracker import SetupTracker
@@ -688,6 +689,52 @@ class RulesTest(unittest.TestCase):
             result = evaluate(snapshot, config, Broker())
             self.assertEqual(result['action'], 'WAIT')
             self.assertNotIn('volume', result)
+
+    def test_completed_displacement_arms_shallow_momentum_limit_without_m1_retest(self):
+        snapshot, config = self.fixture()
+        config.update(minimum_setup_score=0,
+                      minimum_higher_timeframe_alignment=2,
+                      minimum_ladder_reward_risk=.2)
+        latest = snapshot['bars']['M5'][-2]
+        latest.update(open=98.8, high=100.5, low=98.5, close=100.4)
+        context = dict(trend='bullish', atr14_simple=1,
+                       volatility_regime='normal',
+                       pivots={'high': [], 'low': []})
+        setup = dict(
+            direction='BUY', family='breakout_follow_through', level=99,
+            invalidation=98, confirmation_time=latest['time'],
+            confirmation_close=latest['close'], state='CONFIRMED',
+            chart_patterns=['bullish_displacement'])
+        class Broker:
+            def profit(self, kind, symbol, volume, entry, exit):
+                return (exit-entry)*100*volume*(1 if kind == 0 else -1)
+            def margin(self, kind, symbol, volume, entry):
+                return 100*volume
+        with patch('scan_engine.structure', return_value=context), \
+                patch('scan_engine.structural_zones', return_value=[]), \
+                patch('setups.detect', return_value=[setup]):
+            result = evaluate(snapshot, config, Broker())
+        self.assertEqual(result['setup_state'], 'ARMED_LIMIT')
+        self.assertEqual(result['entry_plan']['entry_profile'], 'momentum_pullback')
+        self.assertEqual(result['entry_plan']['target_evidence']['type'], 'atr_projection')
+        self.assertNotIn('retest_confirmation_time', result['entry_plan'])
+        self.assertEqual(result['entry_checks']['entry_method'], 'momentum_pullback_limit')
+
+    def test_only_continuation_family_with_displacement_gets_momentum_zone(self):
+        completed = [
+            {'time': 1, 'open': 99, 'high': 101, 'low': 98, 'close': 100},
+            {'time': 2, 'open': 100, 'high': 103, 'low': 99, 'close': 102},
+        ]
+        setup = {'direction': 'BUY', 'family': 'breakout_follow_through',
+                 'level': 100, 'confirmation_time': 2,
+                 'chart_patterns': ['bullish_displacement']}
+        self.assertTrue(momentum_continuation_setup(setup))
+        self.assertIsNotNone(momentum_pullback_zone(
+            setup, completed, 103, 2, .2, .05))
+        self.assertFalse(momentum_continuation_setup({
+            **setup, 'family': 'demand_rejection'}))
+        self.assertFalse(momentum_continuation_setup({
+            **setup, 'chart_patterns': ['bullish_engulfing']}))
 
     def test_confirmation_requires_two_later_bars(self):
         bars = [bar(i, h) for i, h in enumerate([3, 4, 9, 5, 4])]

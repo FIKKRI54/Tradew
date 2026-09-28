@@ -2,7 +2,7 @@
 import math
 from decimal import Decimal, ROUND_FLOOR
 
-RULE_VERSION = 'structure-research-30'
+RULE_VERSION = 'structure-research-31'
 TIMEFRAMES = {'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600,
               'H4': 14400, 'D1': 86400}
 TIMEFRAME_WEIGHTS = {'H4': 15, 'H1': 15, 'M30': 10, 'M15': 10, 'M5': 25, 'M1': 10}
@@ -186,13 +186,17 @@ def structural_zones(contexts, width, minimum_strength=2, bars_by_timeframe=None
     return sorted(result, key=lambda item: item['price'])
 
 
-def opposing_targets(zones, direction, entry, buffer, current_price=None, spread=0):
+def opposing_targets(zones, direction, entry, buffer, current_price=None, spread=0,
+                     allowed_sources=None):
     """Return execution-aware objectives before the opposing Bid-price zone."""
     kind = 'SUPPLY' if direction == 'BUY' else 'DEMAND'
     sign = 1 if direction == 'BUY' else -1
     candidates = []
     for zone in zones:
         if zone.get('status') != 'active' or zone.get('kind') != kind:
+            continue
+        sources = set(zone.get('active_sources') or zone.get('sources') or [])
+        if allowed_sources and not sources.intersection(allowed_sources):
             continue
         low = zone.get('low', zone.get('price'))
         high = zone.get('high', zone.get('price'))
@@ -204,6 +208,87 @@ def opposing_targets(zones, direction, entry, buffer, current_price=None, spread
                 (current_price is None or sign*(target-current_price) > 0)):
             candidates.append((sign*(target-entry), target))
     return [target for _, target in sorted(candidates)[:2]]
+
+
+def momentum_continuation_setup(setup):
+    """Require completed M5 displacement for the relaxed pullback workflow."""
+    if not setup or setup.get('family') not in (
+            'breakout_follow_through', 'pullback_continuation'):
+        return False
+    expected = ('bullish_displacement' if setup.get('direction') == 'BUY'
+                else 'bearish_displacement')
+    return expected in (setup.get('chart_patterns') or [])
+
+
+def momentum_pullback_zone(setup, completed_m5, current_bid, atr_value,
+                           buffer, tolerance):
+    """Anchor a shallow native limit to the completed displacement body."""
+    if not momentum_continuation_setup(setup):
+        return None
+    candle = next((bar for bar in completed_m5
+                   if bar.get('time') == setup.get('confirmation_time')), None)
+    if candle is None or not isinstance(atr_value, (int, float)) or atr_value <= 0:
+        return None
+    direction = setup['direction']
+    level = float(setup['level'])
+    midpoint = (float(candle['open'])+float(candle['close']))/2
+    anchor = max(level, midpoint) if direction == 'BUY' else min(level, midpoint)
+    half_width = max(buffer/2, atr_value*.125)
+    minimum_gap = max(tolerance, buffer/2)
+    if direction == 'BUY':
+        low = max(level, anchor-half_width)
+        high = min(current_bid-minimum_gap, anchor+half_width)
+    else:
+        low = max(current_bid+minimum_gap, anchor-half_width)
+        high = min(level, anchor+half_width)
+    if high-low+1e-9 < max(atr_value*.20, tolerance*2):
+        return None
+    return {
+        'low': low, 'high': high, 'trigger_side': 'BID',
+        'direction': direction, 'basis': 'completed_m5_displacement_pullback',
+        'confirmation_candle_time': candle['time'],
+        'confirmation_body_midpoint': midpoint,
+    }
+
+
+def momentum_fallback_targets(contexts, completed, direction, current_price,
+                              buffer, spread, atr_value, config):
+    """Use a confirmed intraday pivot, otherwise a fixed ATR projection."""
+    sign = 1 if direction == 'BUY' else -1
+    side = 'high' if direction == 'BUY' else 'low'
+    candidates = []
+    for timeframe in ('M5', 'M15', 'M30', 'H1'):
+        bars = completed.get(timeframe) or []
+        for point in ((contexts.get(timeframe) or {}).get('pivots') or {}).get(side, [])[-8:]:
+            price = point.get('price')
+            confirmed = point.get('confirmed_bar')
+            if not isinstance(price, (int, float)) or not isinstance(confirmed, (int, float)):
+                continue
+            target = (price-buffer if direction == 'BUY' else
+                      price+spread+buffer)
+            if sign*(target-current_price) <= 0:
+                continue
+            broken = any(
+                bar['time'] >= confirmed and
+                sign*(bar['close']-price) > config.get('structural_tolerance', 0)
+                for bar in bars)
+            if not broken:
+                candidates.append((sign*(target-current_price), target,
+                                   timeframe, price, confirmed))
+    if candidates:
+        _, target, timeframe, pivot_price, confirmed = min(candidates)
+        return [target], {
+            'type': 'confirmed_intraday_pivot', 'timeframe': timeframe,
+            'pivot_price': pivot_price, 'confirmed_bar': confirmed,
+        }
+    multiple = float(config.get('momentum_target_atr_multiple', 1.5))
+    if not isinstance(atr_value, (int, float)) or atr_value <= 0 or multiple <= 0:
+        return [], None
+    target = current_price+sign*atr_value*multiple
+    return [target], {
+        'type': 'atr_projection', 'timeframe': 'M5',
+        'anchor': current_price, 'atr': atr_value, 'multiple': multiple,
+    }
 
 
 def _zone_known_for_setup(zone, confirmation_time):
@@ -602,21 +687,36 @@ def evaluate(snapshot, config, broker, contexts=None):
         step = spec['trade_tick_size']
         stop_raw = invalidation - sign * buffer + (result['spread'] if kind == 1 else 0)
         stop = (math.floor(stop_raw / step) if kind == 0 else math.ceil(stop_raw / step)) * step
-        planned_zone = (setup or {}).get('entry_zone') or {}
+        momentum_zone = (momentum_pullback_zone(
+            setup, completed['M5'], tick['bid'], contexts['M5']['atr14_simple'],
+            buffer, tolerance) if setup else None)
+        candidate_setup = ({**setup, 'entry_zone': momentum_zone,
+                            '_momentum_continuation': True}
+                           if momentum_zone else setup)
+        planned_zone = (candidate_setup or {}).get('entry_zone') or {}
         conservative_entry = (planned_zone.get('high') if kind == 0 else
                               planned_zone.get('low'))
         target_entry = (conservative_entry + (result['spread'] if kind == 0 else 0)
                         if conservative_entry is not None else entry)
         targets = opposing_targets(
-            zones, direction, target_entry, buffer, entry, result['spread'])
-        components = directional_score(contexts, completed, direction, setup,
+            zones, direction, target_entry, buffer, entry, result['spread'],
+            {'M5', 'M15', 'M30', 'H1'} if momentum_zone else None)
+        target_evidence = None
+        if targets:
+            target_evidence = {'type': 'active_opposing_zone'}
+        elif momentum_zone:
+            targets, target_evidence = momentum_fallback_targets(
+                contexts, completed, direction, tick['bid'], buffer,
+                result['spread'], contexts['M5']['atr14_simple'], config)
+        components = directional_score(contexts, completed, direction, candidate_setup,
                                        bool(targets), result['spread'], config)
         score = sum(components.values())
         result['score_components'][direction] = components
         result['buy_setup_score' if kind == 0 else 'sell_setup_score'] = score
         if confirmed and targets and sign * (entry - stop) > 0:
-            gated = {**setup, '_context_failures': context_gate(
-                contexts, direction, setup, score, config), '_all_zones': zones}
+            gated = {**candidate_setup, '_context_failures': context_gate(
+                contexts, direction, candidate_setup, score, config),
+                '_all_zones': zones, '_target_evidence': target_evidence}
             candidates.append((direction, kind, level, entry, stop, targets, score, gated))
     result['setup_state'] = setups[-1]['state'] if setups and not candidates else 'WATCH_LEVEL'
     result['setup_lifecycle'] = 'DETECTED' if setups else 'SCANNING'
@@ -703,6 +803,9 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
                     ('login', 'server', 'mode', 'currency')},
         'zone': result['planned_entry_zone'], 'level': level,
         'setup_family': setup['family'],
+        'entry_profile': ('momentum_pullback' if setup.get('_momentum_continuation')
+                          else 'confirmed_retest'),
+        'target_evidence': setup.get('_target_evidence'),
         'structural_invalidation': effective_invalidation,
         'stop': stop, 'targets': targets,
         'confirmation_time': setup['confirmation_time'],
@@ -820,27 +923,33 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
     zone = result['planned_entry_zone']
     result['entry_checks'].update({
         'structural_price': structural_price, 'setup_level': level,
-        'entry_method': 'broker_limit_retest', 'entry_zone': zone,
+        'entry_method': ('momentum_pullback_limit'
+                         if setup.get('_momentum_continuation') else
+                         'broker_limit_retest'),
         'setup_family': setup['family'],
         'chart_patterns': result['chart_confirmation'],
         'order_block': result['order_block'],
     })
-    retest_time = confirmed_retest(
-        snapshot['bars']['M1'][:-1], zone, direction, setup['confirmation_time'])
-    if retest_time is None:
-        result['setup_state'] = 'WAIT_RETEST'
-        result['setup_lifecycle'] = 'CONFIRMING'
-        result['reasons'] = [
-            f'{setup["family"]}: completed M5 setup passed context filters',
-            f'Waiting for a completed M1 retest and rejection inside {zone["low"]:.2f}-{zone["high"]:.2f}',
-            'No broker order is submitted before the rejection candle closes',
-        ]
-        result['next_trigger'] = (
-            f'Completed M1 {direction} rejection at {zone["low"]:.2f}-{zone["high"]:.2f}; '
-            f'cancel on M5 reclaim or invalidation {stop:.2f}')
-        return result
-    result['entry_plan']['retest_confirmation_time'] = retest_time
-    result['entry_checks']['retest_confirmation_time'] = retest_time
+    if setup.get('_momentum_continuation'):
+        result['entry_plan']['momentum_confirmation_time'] = setup['confirmation_time']
+        result['entry_checks']['momentum_confirmation_time'] = setup['confirmation_time']
+    else:
+        retest_time = confirmed_retest(
+            snapshot['bars']['M1'][:-1], zone, direction, setup['confirmation_time'])
+        if retest_time is None:
+            result['setup_state'] = 'WAIT_RETEST'
+            result['setup_lifecycle'] = 'CONFIRMING'
+            result['reasons'] = [
+                f'{setup["family"]}: completed M5 setup passed context filters',
+                f'Waiting for a completed M1 retest and rejection inside {zone["low"]:.2f}-{zone["high"]:.2f}',
+                'No broker order is submitted before the rejection candle closes',
+            ]
+            result['next_trigger'] = (
+                f'Completed M1 {direction} rejection at {zone["low"]:.2f}-{zone["high"]:.2f}; '
+                f'cancel on M5 reclaim or invalidation {stop:.2f}')
+            return result
+        result['entry_plan']['retest_confirmation_time'] = retest_time
+        result['entry_checks']['retest_confirmation_time'] = retest_time
     from entry_plan import quote_blocker
     blocked = quote_blocker(result['entry_plan'], snapshot['tick']['bid'],
                             snapshot['tick']['ask'], snapshot['retrieval_end_utc'],
@@ -852,12 +961,15 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
     result['setup_state'] = 'ARMED_LIMIT'
     result['setup_lifecycle'] = 'ARMED_LIMIT'
     pattern_text = ', '.join(label.replace('_', ' ') for label in result['chart_confirmation'])
+    momentum = setup.get('_momentum_continuation')
     result.update(
         action='WAIT', stop=stop, targets=targets,
-        reasons=[setup['family'] + ': completed M5 setup and M1 retest rejection confirmed',
+        reasons=[(setup['family'] + ': completed M5 displacement armed a shallow pullback limit'
+                  if momentum else
+                  setup['family'] + ': completed M5 setup and M1 retest rejection confirmed'),
                  ('Chart confirmation: ' + pattern_text if pattern_text else
                   'Confirmed structural retest at support/resistance zone'),
                  'Only still-pending, adequately protected ladder layers may be submitted'],
-        next_trigger=(f"Broker {direction}_LIMIT ladder at {zone['low']:.2f}-{zone['high']:.2f}; "
+        next_trigger=(f"Broker {direction}_LIMIT {'momentum pullback ' if momentum else ''}ladder at {zone['low']:.2f}-{zone['high']:.2f}; "
                       f"cancel on M5 reclaim or invalidation {stop:.2f}"))
     return result

@@ -138,7 +138,8 @@ def review_context(decision):
 
 def independent_context(decision, candle_limit=INDEPENDENT_CANDLE_LIMIT,
                         level_limit=INDEPENDENT_LEVEL_LIMIT,
-                        timestamp_offset_seconds=0):
+                        timestamp_offset_seconds=0,
+                        momentum_target_atr_multiple=1.5):
     """Build a blind market payload without the deterministic conclusion."""
     if not isinstance(candle_limit, int) or not 5 <= candle_limit <= 60:
         raise ValueError('candle_limit must be an integer from 5 to 60')
@@ -147,6 +148,11 @@ def independent_context(decision, candle_limit=INDEPENDENT_CANDLE_LIMIT,
     if (isinstance(timestamp_offset_seconds, bool) or
             not isinstance(timestamp_offset_seconds, (int, float))):
         raise ValueError('timestamp_offset_seconds must be numeric')
+    if (isinstance(momentum_target_atr_multiple, bool) or
+            not isinstance(momentum_target_atr_multiple, (int, float)) or
+            not math.isfinite(momentum_target_atr_multiple) or
+            momentum_target_atr_multiple <= 0):
+        raise ValueError('momentum_target_atr_multiple must be positive')
     def normalized_time(value):
         return value - timestamp_offset_seconds if isinstance(value, (int, float)) else value
     chart_data = decision.get('chart_data') or {}
@@ -221,11 +227,12 @@ def independent_context(decision, candle_limit=INDEPENDENT_CANDLE_LIMIT,
             'expiry_minutes': [5, 30],
             'risk_tiers': {'LOW': '10%', 'MEDIUM': '20%', 'HIGH': '30%'},
             'risk_tier_rule': 'READY requires one explicit tier; WAIT requires null; there is no default tier',
-            'price_source': 'all prices must be grounded in supplied candles, quote, or levels',
-            'take_profit_rule': 'BUY take-profit must be inside an active SUPPLY target zone; SELL take-profit must be inside an active DEMAND target zone; otherwise WAIT',
-            'tp1_source_rule': 'TP1 must have at least one active M5, M15, M30, or H1 source; H4/D1-only zones are context or runner objectives, not TP1',
+            'price_source': 'prices must be grounded in supplied candles, quote, or levels; the only derived exceptions are an exact completed-M5 body midpoint entry and the fixed M5-ATR fallback target',
+            'fallback_target_atr_multiple': float(momentum_target_atr_multiple),
+            'take_profit_rule': 'Prefer an active opposing M5-H1 zone; otherwise use an unbroken confirmed M5-H1 pivot; only when neither exists use exactly current bid plus/minus fallback_target_atr_multiple times M5 ATR in the trade direction',
+            'tp1_source_rule': 'H4/D1-only zones and pivots are context or runner objectives, not intraday TP1 evidence',
             'confirmation_rule': 'Latest completed M5 must show directional engulfing, rejection, soldiers/crows or displacement touching/crossing confirmation_level; M1 alone is insufficient',
-            'entry_rule': 'Entry must match active M5+ demand/low for BUY or supply/high for SELL; no quote-interpolated ladder',
+            'entry_rule': 'Entry normally matches active M5+ demand/low for BUY or supply/high for SELL; after an aligned latest completed-M5 displacement it may instead equal that candle open or exact 50% body midpoint; no quote-interpolated ladder',
             'entry_reachability_rule': 'The backend rejects short-lived limits beyond both recent M1 pullback behavior and the outer M5-ATR cap: 0.875 ATR for 5m, 1.125 ATR for 15m, 1.5 ATR for 30m; return WAIT instead of READY for a substantial rebound',
             'market_freshness_rule': 'Return WAIT during rollover/closed-market windows and immediately after a large opening gap until three fresh M5 candles complete',
             'stop_rule': 'SL must be beyond structural invalidation and the confirmation pattern, with distance at least max(0.5*M5 ATR14, 2*spread); never invent a tighter SL for reward/risk',
@@ -268,22 +275,24 @@ def _independent_prompt(context):
         'SELL_LIMIT above the current bid with stop_loss and structural_invalidation above '
         'entry_price and take_profit below it. confirmation_level must be a completed-candle '
         'or confirmed structural price that the market currently holds beyond in the trade '
-        'direction. The supplied active_target_zones are the only permitted take-profit '
-        'references: BUY take_profit must lie inside one supplied active SUPPLY zone; SELL '
-        'take_profit must lie inside one supplied active DEMAND zone. Raw confirmed pivots '
-        'and candle extremes are context only, not substitutes for an active target zone. '
-        'TP1 must have an active M5, M15, M30, or H1 source; an H4/D1-only target is not '
-        'an executable intraday TP1. '
-        'If no suitable active opposing zone exists, return WAIT. Every plan price must be '
+        'direction. Prefer a take_profit inside a supplied active opposing M5, M15, M30, '
+        'or H1 zone. If no such zone exists, take_profit may equal an unbroken confirmed '
+        'M5-H1 opposing pivot. Only when neither intraday target exists may it equal the '
+        'exact current-bid projection using fallback_target_atr_multiple and M5 ATR14 from '
+        'the planning_contract. H4/D1-only targets remain context or runner objectives. '
+        'Every plan price must be '
         'supported by the planning_contract. A READY plan needs a latest completed M5 '
         'engulfing/rejection, soldiers/crows or displacement at confirmation_level. '
         'M1-only movement cannot authorize a trade. D1 must never authorize an entry by '
         'itself. If D1, H1, or H4 last completed '
         'close is against the trade relative to its close two bars earlier, require an '
         'M5 engulfing/rejection closing beyond the previous M5 extreme AND M15-or-higher '
-        'entry structure. Entries must match active same-side zones or unbroken M5+ '
-        'pivots (M15+ for countertrend); BUY chart levels are bid prices, so allow spread '
-        'when selecting an executable entry. Stop must be at or beyond structural '
+        'entry structure. Entries normally match active same-side zones or unbroken M5+ '
+        'pivots (M15+ for countertrend). When the latest completed M5 candle itself has '
+        'directional displacement aligned with the higher-timeframe context, a shallow '
+        'pullback entry may instead equal that candle open or its exact 50% body midpoint. '
+        'BUY chart levels are bid prices, so allow spread when selecting an executable '
+        'entry. Stop must be at or beyond structural '
         'invalidation and outside the last two M5 extremes, at least 0.5 M5 ATR14 '
         'and two spreads from entry. If unsupported, WAIT; do not tighten stops to '
         'manufacture reward/risk. The original entry will be preserved; extra layers '
@@ -292,8 +301,9 @@ def _independent_prompt(context):
         'recent M1 pullbacks and the expiry-specific M5 ATR cap supplied in the planning '
         'contract. If entry needs a substantial rebound, return WAIT and let a fresh '
         'review occur near the zone. Return WAIT during rollover or immediately after a '
-        'large opening gap. All plan prices must be '
-        'grounded in the supplied candles, quote, or confirmed levels. Use a 5-30 minute expiry. If any complete plan element is '
+        'large opening gap. All plan prices must be grounded in the supplied candles, '
+        'quote, or confirmed levels, except the exact body-midpoint entry and exact fixed '
+        'ATR target described above. Use a 5-30 minute expiry. If any complete plan element is '
         'unsupported, return WAIT with WATCH or NO_SETUP and trade_plan null. '
         'For every READY plan, explicitly choose exactly one risk_tier from LOW, MEDIUM, '
         'or HIGH. LOW maps to a 10% account-balance stop-risk budget, MEDIUM to 20%, and '
@@ -556,7 +566,9 @@ def independent_analysis(decision, provider=None, root=ROOT):
         market_config = load_json_config('scan_config.json', root)
         context = independent_context(
             decision,
-            timestamp_offset_seconds=market_config.get('timestamp_offset_seconds', 0))
+            timestamp_offset_seconds=market_config.get('timestamp_offset_seconds', 0),
+            momentum_target_atr_multiple=market_config.get(
+                'momentum_target_atr_multiple', 1.5))
         context['planning_contract'].update(
             minimum_layer_reward_risk=market_config['minimum_ladder_reward_risk'],
             tp1_close_fraction=(market_config['take_profit_close_fraction']

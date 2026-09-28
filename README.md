@@ -9,6 +9,7 @@ Tradew is an experimental XAUUSD scanner and MT5 execution controller. It combin
 - Collects completed M1, M5, M15, M30, H1, H4, and D1 candles from MT5.
 - Maps active supply/demand, support/resistance, pivots, order blocks, liquidity sweeps, and candle confirmations.
 - Creates deterministic market or layered limit plans and validates spread, freshness, exposure, margin, stop geometry, and reachable entry distance.
+- Supports both confirmed retest limits and a bounded completed-M5 momentum-pullback limit; the latter still requires aligned context and protected native-order geometry.
 - Optionally asks one configured provider—Codex CLI or a Gemini browser worker—for an informed review or an independent plan.
 - Submits only through the authenticated MT5 bridge when the selected authorization mode and all deterministic broker checks pass.
 - Supervises owned pending orders and manages TP1/runner positions without widening stops.

@@ -1,7 +1,8 @@
 """Price-only validation of independent plans, without deterministic scores/actions.
 
-v29 requires a completed M5 pattern at a grounded level, a reachable structural entry,
-and a stop beyond the thesis invalidation. No prices are repaired or widened.
+v30 permits a completed, aligned M5 displacement to anchor a shallow pullback
+entry and permits a reproducible intraday-pivot or fixed-ATR target when price
+discovery leaves no active opposing intraday zone. No prices are repaired.
 """
 import math
 
@@ -9,7 +10,7 @@ from scan_engine import atr
 from setups import candle_patterns
 
 
-VERSION = 'independent-auto-29'
+VERSION = 'independent-auto-30'
 FRAMES = ('M5', 'M15', 'M30', 'H1', 'H4', 'D1')
 INTRADAY_TARGET_FRAMES = ('M5', 'M15', 'M30', 'H1')
 
@@ -159,6 +160,111 @@ def supported_entry(decision, direction, price, tolerance, higher_only=False):
     return False
 
 
+def momentum_entry_prices(decision, direction, proof, tolerance):
+    """Derived prices allowed only from the latest aligned M5 displacement."""
+    if proof.get('conflicting_timeframes'):
+        return []
+    expected = 'bullish_displacement' if direction == 'BUY' else 'bearish_displacement'
+    if expected not in (proof.get('patterns') or []):
+        return []
+    completed = (decision.get('chart_data') or {}).get('M5', [])[:-1]
+    candle = next((bar for bar in completed if bar.get('time') == proof.get('time')), None)
+    if candle is None:
+        return []
+    spread = decision.get('spread') or 0
+    executable_shift = spread if direction == 'BUY' else 0
+    anchors = [float(candle['open']),
+               (float(candle['open'])+float(candle['close']))/2]
+    quote = decision.get('ask') if direction == 'BUY' else decision.get('bid')
+    return [price+executable_shift for price in anchors
+            if isinstance(quote, (int, float)) and
+            ((direction == 'BUY' and price+executable_shift < quote-tolerance) or
+             (direction == 'SELL' and price > quote+tolerance))]
+
+
+def _active_target_matches(decision, direction, target):
+    required = 'SUPPLY' if direction == 'BUY' else 'DEMAND'
+    target_sets = (decision.get('chart_analysis') or {}).get('active_target_zones') or {}
+    return any(
+        zone.get('status') == 'active' and zone.get('kind') == required and
+        any(frame in (zone.get('active_sources') or zone.get('sources') or [])
+            for frame in INTRADAY_TARGET_FRAMES) and
+        isinstance(zone.get('low'), (int, float)) and
+        isinstance(zone.get('high'), (int, float)) and
+        zone['low'] <= target <= zone['high']
+        for zone in target_sets.get(direction, []) if isinstance(zone, dict))
+
+
+def _has_active_target(decision, direction):
+    required = 'SUPPLY' if direction == 'BUY' else 'DEMAND'
+    target_sets = (decision.get('chart_analysis') or {}).get('active_target_zones') or {}
+    return any(
+        zone.get('status') == 'active' and zone.get('kind') == required and
+        any(frame in (zone.get('active_sources') or zone.get('sources') or [])
+            for frame in INTRADAY_TARGET_FRAMES)
+        for zone in target_sets.get(direction, []) if isinstance(zone, dict))
+
+
+def _eligible_pivot_targets(decision, direction, tolerance):
+    sign = 1 if direction == 'BUY' else -1
+    side = 'high' if direction == 'BUY' else 'low'
+    quote = decision.get('ask') if direction == 'BUY' else decision.get('bid')
+    result = []
+    for frame in INTRADAY_TARGET_FRAMES:
+        bars = ((decision.get('chart_data') or {}).get(frame) or [])[:-1]
+        points = (((decision.get('structure') or {}).get(frame) or {}).get('pivots') or {}).get(side, [])
+        for point in points[-8:]:
+            price, confirmed = point.get('price'), point.get('confirmed_bar')
+            if (not isinstance(price, (int, float)) or
+                    not isinstance(confirmed, (int, float)) or
+                    not isinstance(quote, (int, float)) or
+                    sign*(price-quote) <= tolerance):
+                continue
+            if any(bar['time'] >= confirmed and
+                   sign*(bar['close']-price) > tolerance for bar in bars):
+                continue
+            result.append((float(price), frame, confirmed))
+    return result
+
+
+def independent_target_evidence(source, live, direction, target, config):
+    """Classify a target using evidence reproducible in source and live data."""
+    tolerance = max(float(config.get('structural_tolerance', .1)),
+                    float(source.get('spread') or 0), .01)
+    if (_active_target_matches(source, direction, target) and
+            _active_target_matches(live, direction, target)):
+        return {'type': 'active_opposing_zone'}
+    source_pivots = _eligible_pivot_targets(source, direction, tolerance)
+    live_pivots = _eligible_pivot_targets(live, direction, tolerance)
+    pivot = next((item for item in source_pivots
+                  if abs(item[0]-target) <= tolerance and
+                  any(abs(other[0]-target) <= tolerance for other in live_pivots)), None)
+    if pivot:
+        return {'type': 'confirmed_intraday_pivot', 'timeframe': pivot[1],
+                'pivot_price': pivot[0], 'confirmed_bar': pivot[2]}
+    # ATR projection is a last-resort price-discovery objective, not a way to
+    # ignore an available structural target.
+    if (_has_active_target(source, direction) or source_pivots or
+            _has_active_target(live, direction) or live_pivots):
+        raise ValueError('Independent ATR target is unavailable while an intraday structural target exists')
+    completed = ((source.get('chart_data') or {}).get('M5') or [])[:-1][-24:]
+    atr_value = atr(completed)
+    if not atr_value:
+        raise ValueError('Independent ATR target evidence is unavailable')
+    sign = 1 if direction == 'BUY' else -1
+    multiple = float(config.get('momentum_target_atr_multiple', 1.5))
+    expected = float(source['bid'])+sign*atr_value*multiple
+    # Permit broker/display rounding only; do not let an LLM choose a materially
+    # different projection and still inherit the ATR-fallback classification.
+    allowed_error = max(tolerance, .01)
+    if abs(target-expected) > allowed_error:
+        raise ValueError(
+            f'Independent target is not an active zone, confirmed pivot, or {multiple:.2f} ATR projection')
+    return {'type': 'atr_projection', 'timeframe': 'M5',
+            'anchor': float(source['bid']), 'atr': atr_value,
+            'multiple': multiple, 'expected_target': expected}
+
+
 def validate_independent_geometry(plan, spread, atr_value, config):
     sign = 1 if plan['direction'] == 'BUY' else -1
     stop, invalid = plan['stop'], plan['structural_invalidation']
@@ -192,8 +298,14 @@ def validate_independent_evidence(source, live, raw, config):
     if any(sign*(b['close']-raw['confirmation_level']) <= 0 for b in live_bars
            if b['time'] > proof['time']):
         raise ValueError('Independent confirmation has been reclaimed on completed M5')
+    momentum_prices = [momentum_entry_prices(d, direction, proof, tolerance)
+                       for d in (source, live)]
     def supported(price):
-        return all(supported_entry(d, direction, price, tolerance, bool(conflicts)) for d in (source, live))
+        structural = all(supported_entry(
+            d, direction, price, tolerance, bool(conflicts)) for d in (source, live))
+        momentum = all(any(abs(price-anchor) <= tolerance for anchor in prices)
+                       for prices in momentum_prices)
+        return structural or momentum
     if not supported(raw['entry_price']):
         raise ValueError('Independent entry lacks active M5+ structure (M15+ for countertrend)')
     reachability = entry_reachability(
@@ -206,6 +318,9 @@ def validate_independent_evidence(source, live, raw, config):
         raise ValueError('Independent stop is inside its completed M5 confirmation pattern')
     # Additional layers require distinct confirmed prices, never quote interpolation.
     candidates = [float(raw['entry_price'])]
+    candidates.extend(price for price in momentum_prices[1]
+                      if 0 < sign*(raw['entry_price']-price) <= atr_value and
+                      sign*(price-raw['stop_loss']) >= minimum)
     side = 'low' if direction == 'BUY' else 'high'
     spread = live['ask']-live['bid'] if direction == 'BUY' else 0
     for frame in FRAMES:

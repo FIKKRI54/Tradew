@@ -202,28 +202,9 @@ def build_independent_execution_decision(source, live, independent_result, confi
             sign*(prices['take_profit']-prices['entry_price']) <= 0):
         raise ValueError('Independent plan price geometry is invalid')
 
-    def active_target_match(decision):
-        chart = decision.get('chart_analysis') or {}
-        target_sets = chart.get('active_target_zones')
-        if isinstance(target_sets, dict):
-            candidates = target_sets.get(direction, [])
-        else:
-            candidates = chart.get('zones') or []
-        required_kind = 'SUPPLY' if direction == 'BUY' else 'DEMAND'
-        return any(
-            zone.get('status') == 'active' and zone.get('kind') == required_kind and
-            any(frame in (zone.get('active_sources') or zone.get('sources') or [])
-                for frame in ('M5', 'M15', 'M30', 'H1')) and
-            isinstance(zone.get('low'), (int, float)) and
-            isinstance(zone.get('high'), (int, float)) and
-            zone['low'] <= prices['take_profit'] <= zone['high']
-            for zone in candidates if isinstance(zone, dict))
-
-    if not active_target_match(source):
-        raise ValueError(
-            'Independent TP1 is not inside a source-snapshot active M5-H1 opposing zone')
-    if not active_target_match(live):
-        raise ValueError('Independent TP1 M5-H1 zone is no longer active in live data')
+    from independent_validation import independent_target_evidence
+    target_evidence = independent_target_evidence(
+        source, live, direction, prices['take_profit'], config)
     bid, ask = live.get('bid'), live.get('ask')
     if not all(isinstance(value, (int, float)) and math.isfinite(value)
                for value in (bid, ask)) or not 0 < bid <= ask:
@@ -250,10 +231,18 @@ def build_independent_execution_decision(source, live, independent_result, confi
         if isinstance(point.get('price'), (int, float)))
     observed.extend(value for value in (source.get('bid'), source.get('ask'))
                     if isinstance(value, (int, float)))
+    observed.extend(
+        (candle['open']+candle['close'])/2
+        for candle in ((source.get('chart_data') or {}).get('M5') or [])[:-1]
+        if all(isinstance(candle.get(key), (int, float))
+               for key in ('open', 'close')))
     tolerance = max(config.get('structural_tolerance', 0),
                     source.get('spread') or 0, 0.01)+1e-9
+    grounded_prices = dict(prices)
+    if target_evidence.get('type') == 'atr_projection':
+        grounded_prices.pop('take_profit', None)
     if not observed or any(min(abs(value-reference) for reference in observed) > tolerance
-                           for value in prices.values()):
+                           for value in grounded_prices.values()):
         raise ValueError('Independent plan contains a price not grounded in blind input')
     m5 = (source.get('chart_data') or {}).get('M5') or []
     if len(m5) < 2:
@@ -274,8 +263,9 @@ def build_independent_execution_decision(source, live, independent_result, confi
                 f"{confirmation_time}:{entry}")
     setup_ref = hashlib.sha256(setup_id.encode('utf-8')).hexdigest()[:10]
     plan = {
-        'rule_version': 'independent-auto-29',
+        'rule_version': 'independent-auto-30',
         'confirmation_evidence': evidence, 'verified_entry_prices': verified_prices,
+        'target_evidence': target_evidence,
         'source': 'independent_llm',
         'risk_tier': risk_tier, 'risk_reason': risk_reason.strip(),
         'source_snapshot_id': source['snapshot_id'], 'setup_id': setup_id,

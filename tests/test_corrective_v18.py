@@ -6,13 +6,25 @@ from collections import namedtuple
 
 from auto_execution import authorization_result
 from limit_ladder import attach_limit_ladder
-from mt5_connector import MT5Adapter, _execution_history_blocker
+from mt5_connector import MT5Adapter, _execution_history_blocker, _retest_blocker
 from scan_engine import confirmed_retest
 from setup_tracker import SetupTracker
 from test_entry_plans import Terminal, execution_case
 
 
 class CorrectiveV18Tests(unittest.TestCase):
+    def test_v31_retest_proof_is_skipped_only_for_momentum_profile(self):
+        plan = {
+            'rule_version': 'structure-research-31',
+            'entry_profile': 'momentum_pullback',
+            'confirmation_time': 100,
+        }
+        self.assertIsNone(_retest_blocker(None, 'XAUUSD.c', plan, 'BUY'))
+        plan['entry_profile'] = 'confirmed_retest'
+        self.assertEqual(
+            _retest_blocker(None, 'XAUUSD.c', plan, 'BUY'),
+            'retest_unconfirmed')
+
     def test_completed_rejection_is_required_after_confirmation(self):
         zone = {'low': 100, 'high': 100.25}
         bars = [

@@ -87,6 +87,11 @@ def load_config():
         value = config.get(key)
         if value is not None and value <= 0:
             raise ValueError(key + ' must be positive')
+    momentum_target = config.get('momentum_target_atr_multiple', 1.5)
+    if (isinstance(momentum_target, bool) or
+            not isinstance(momentum_target, (int, float)) or
+            not math.isfinite(momentum_target) or momentum_target <= 0):
+        raise ValueError('momentum_target_atr_multiple must be positive')
     if (config.get('volatility_low_ratio') is not None and
             config.get('volatility_high_ratio') is not None and
             config['volatility_low_ratio'] >= config['volatility_high_ratio']):

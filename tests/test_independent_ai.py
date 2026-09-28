@@ -110,6 +110,8 @@ class IndependentAiTests(unittest.TestCase):
         self.assertEqual(len(context['confirmed_structural_levels']['D1']['high']), 6)
         self.assertEqual(context['active_target_zones']['BUY'][0]['source_timeframes'], ['H1'])
         self.assertEqual(context['active_target_zones']['BUY'][0]['high'], 126)
+        self.assertEqual(
+            context['planning_contract']['fallback_target_atr_multiple'], 1.5)
         serialized = json.dumps(context)
         for hidden in ('HIDDEN_REASON', 'HIDDEN_TRIGGER', 'HIDDEN_TREND',
                        'buy_setup_score', 'sell_setup_score', 'setup_state', 'targets'):
@@ -203,7 +205,7 @@ class IndependentAiTests(unittest.TestCase):
         planned = build_independent_execution_decision(source, live, analysis, config)
         self.assertEqual(planned['planned_direction'], 'BUY')
         self.assertEqual(planned['entry_plan']['source'], 'independent_llm')
-        self.assertEqual(planned['entry_plan']['rule_version'], 'independent-auto-29')
+        self.assertEqual(planned['entry_plan']['rule_version'], 'independent-auto-30')
         self.assertEqual(planned['entry_plan']['risk_tier'], 'MEDIUM')
         self.assertEqual(planned['entry_plan']['risk_fraction'], .2)
         self.assertEqual(planned['entry_plan']['pending_price'], 122)
@@ -304,7 +306,7 @@ class IndependentAiTests(unittest.TestCase):
                 },
             },
         }
-        with self.assertRaisesRegex(ValueError, 'no longer active'):
+        with self.assertRaisesRegex(ValueError, 'intraday structural target exists'):
             build_independent_execution_decision(source, live, analysis, config)
 
     def test_independent_execution_rejects_target_outside_active_zone(self):
@@ -329,8 +331,40 @@ class IndependentAiTests(unittest.TestCase):
                 },
             },
         }
-        with self.assertRaisesRegex(ValueError, 'source-snapshot active M5-H1 opposing zone'):
+        with self.assertRaisesRegex(ValueError, 'intraday structural target exists'):
             build_independent_execution_decision(source, live, analysis, config)
+
+    def test_aligned_m5_displacement_can_use_midpoint_and_fixed_atr_target(self):
+        from scan_engine import atr
+        source = decision_fixture()
+        source['snapshot_time'] = time.time()
+        source['positions_summary'] = {'positions': [], 'pending_orders': []}
+        source['chart_analysis'] = {
+            'zones': [], 'active_target_zones': {'BUY': [], 'SELL': []}}
+        source['structure'] = {
+            frame: {'pivots': {'high': [], 'low': []}, 'trend': 'HIDDEN_TREND'}
+            for frame in source['structure']}
+        latest = source['chart_data']['M5'][-2]
+        latest.update(open=120, high=123.5, low=119.8, close=123.2)
+        midpoint_entry = (latest['open']+latest['close'])/2+source['spread']
+        m5_atr = atr(source['chart_data']['M5'][:-1][-24:])
+        target = source['bid']+m5_atr*1.5
+        live = {**source, 'snapshot_id': 'live-momentum', 'account_mode': 'demo'}
+        config = json.loads(Path('tests/fixtures/scan_config.json').read_text())
+        config['expected_mode'] = 'demo'
+        analysis = {'snapshot_id': source['snapshot_id'], 'analysis': {
+            'status': 'ok', 'setup_status': 'READY', 'recommended_action': 'BUY',
+            'risk_tier': 'LOW', 'risk_reason': 'Aligned completed displacement.',
+            'trade_plan': {
+                'direction': 'BUY', 'order_type': 'BUY_LIMIT',
+                'entry_price': midpoint_entry, 'stop_loss': 119,
+                'take_profit': target, 'confirmation_level': 121,
+                'structural_invalidation': 119, 'expires_in_minutes': 15}}}
+        result = build_independent_execution_decision(source, live, analysis, config)
+        plan = result['entry_plan']
+        self.assertEqual(plan['target_evidence']['type'], 'atr_projection')
+        self.assertIn('bullish_displacement', plan['confirmation_evidence']['patterns'])
+        self.assertAlmostEqual(plan['pending_price'], midpoint_entry)
 
     def test_independent_analysis_uses_selected_provider_and_separate_log(self):
         response = {

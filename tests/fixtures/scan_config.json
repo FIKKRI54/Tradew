@@ -46,6 +46,7 @@
   "independent_reachability_m1_lookback": 120,
   "independent_gap_atr_multiple": 1.5,
   "independent_gap_cooldown_m5_bars": 3,
+  "momentum_target_atr_multiple": 1.5,
   "max_ladder_volume_ratio": 2.0,
   "loss_cooldown_seconds": 900,
   "max_consecutive_losses": 2,
