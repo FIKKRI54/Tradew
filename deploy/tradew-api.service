@@ -1,0 +1,16 @@
+[Unit]
+Description=Tradew scanner, consensus, and execution API
+After=network-online.target tradew-mt5-bridge.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tradew-app/current
+EnvironmentFile=%h/.config/tradew/tradew.env
+ExecStart=%h/tradew-app/venv/bin/gunicorn --workers 1 --threads 4 --timeout 300 --bind 127.0.0.1:5000 api_server:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

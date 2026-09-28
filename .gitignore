@@ -1,0 +1,67 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+/scan_config.json
+/llm_config.json
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*-password.txt
+.device-access/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+
+# Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Runtime logs and state
+*.log
+*.log.*
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.csv
+audit-archives/
+chroma_db/
+setup_state.json
+setup_state.tmp
+push_alert_state.json
+push_subscriptions.json
+vapid_private.pem
+
+# Build and deployment artifacts
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+release/
+releases/
+
+# Browser/editor/OS state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

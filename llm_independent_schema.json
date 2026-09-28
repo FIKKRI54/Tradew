@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "market_bias": {"type": "string", "enum": ["BULLISH", "BEARISH", "NEUTRAL"]},
+    "recommended_action": {"type": "string", "enum": ["BUY", "SELL", "WAIT"]},
+    "setup_status": {"type": "string", "enum": ["NO_SETUP", "WATCH", "READY"]},
+    "risk_tier": {"type": ["string", "null"], "enum": ["LOW", "MEDIUM", "HIGH", null]},
+    "risk_reason": {"type": "string", "minLength": 1, "maxLength": 400},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 800},
+    "plain_language_summary": {"type": "string", "minLength": 1, "maxLength": 600},
+    "evidence": {
+      "type": "array", "maxItems": 6,
+      "items": {"type": "string", "maxLength": 240}
+    },
+    "entry_condition": {"type": "string", "minLength": 1, "maxLength": 400},
+    "invalidation_condition": {"type": "string", "minLength": 1, "maxLength": 400},
+    "objectives": {
+      "type": "array", "maxItems": 4,
+      "items": {"type": "string", "maxLength": 240}
+    },
+    "risk_flags": {
+      "type": "array", "maxItems": 6,
+      "items": {"type": "string", "maxLength": 240}
+    },
+    "trade_plan": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "direction": {"type": "string", "enum": ["BUY", "SELL"]},
+        "order_type": {"type": "string", "enum": ["BUY_LIMIT", "SELL_LIMIT"]},
+        "entry_price": {"type": "number", "exclusiveMinimum": 0},
+        "stop_loss": {"type": "number", "exclusiveMinimum": 0},
+        "take_profit": {"type": "number", "exclusiveMinimum": 0},
+        "confirmation_level": {"type": "number", "exclusiveMinimum": 0},
+        "structural_invalidation": {"type": "number", "exclusiveMinimum": 0},
+        "expires_in_minutes": {"type": "integer", "minimum": 5, "maximum": 30}
+      },
+      "required": ["direction", "order_type", "entry_price", "stop_loss", "take_profit", "confirmation_level", "structural_invalidation", "expires_in_minutes"]
+    }
+  },
+  "required": ["market_bias", "recommended_action", "setup_status", "risk_tier", "risk_reason", "summary", "plain_language_summary", "evidence", "entry_condition", "invalidation_condition", "objectives", "risk_flags", "trade_plan"]
+}

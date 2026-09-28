@@ -1,0 +1,18 @@
+[Unit]
+Description=Tradew authenticated MT5 bridge under Wine
+After=network-online.target tradew-gemini-browser.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tradew-app/current
+EnvironmentFile=%h/.config/tradew/tradew.env
+Environment=DISPLAY=:2
+Environment=WINEPREFIX=%h/.mt5
+ExecStart=/usr/bin/wine %h/.mt5/drive_c/Python312/python.exe -m waitress --listen=127.0.0.1:5010 mt5_bridge:app
+Restart=on-failure
+RestartSec=8
+UMask=0077
+
+[Install]
+WantedBy=default.target

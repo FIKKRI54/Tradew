@@ -1,0 +1,18 @@
+{
+  "name": "Tradew Gold Scanner",
+  "short_name": "Tradew",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080e15",
+  "theme_color": "#080e15",
+  "description": "Private deterministic XAUUSD advisory scanner",
+  "icons": [
+    {
+      "src": "/notification-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

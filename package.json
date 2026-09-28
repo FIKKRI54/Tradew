@@ -1,0 +1,10 @@
+{
+  "name": "tradew",
+  "private": true,
+  "scripts": {
+    "dev": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File run_system.ps1",
+    "build": "npm.cmd --prefix frontend run build",
+    "lint": "npm.cmd --prefix frontend run lint",
+    "test": "python -B -m unittest discover -s tests -v"
+  }
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Tradew Gemini browser on the private VNC desktop
+After=tigervnc-deploy.service
+Requires=tigervnc-deploy.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:2
+Environment=XAUTHORITY=%h/.Xauthority
+ExecStart=/usr/bin/google-chrome --user-data-dir=%h/.config/tradew-gemini-browser --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 --no-first-run --no-default-browser-check --password-store=basic --new-window https://gemini.google.com/app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

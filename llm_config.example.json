@@ -1,0 +1,22 @@
+{
+  "enabled": false,
+  "mode": "single_provider",
+  "default_provider": "gemini",
+  "codex": {
+    "enabled": false,
+    "command": "codex",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "service_tier": "default",
+    "timeout_seconds": 300
+  },
+  "gemini": {
+    "enabled": false,
+    "model": "gemini-web-session",
+    "timeout_seconds": 180,
+    "transport": "local_worker",
+    "authentication": "vnc_browser_session",
+    "remote_python": "python3",
+    "remote_script": "vps_gemini_reviewer.py"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {"type": "string", "enum": ["AGREE", "CAUTION", "DISAGREE"]},
+    "recommended_action": {
+      "type": "string",
+      "enum": ["BUY", "SELL", "WAIT", "CLOSE", "PARTIAL CLOSE", "MOVE SL", "MOVE SL TO BE", "TRAIL SL"]
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 800},
+    "risk_flags": {
+      "type": "array", "maxItems": 6,
+      "items": {"type": "string", "maxLength": 240}
+    },
+    "conditions_to_proceed": {
+      "type": "array", "maxItems": 6,
+      "items": {"type": "string", "maxLength": 240}
+    }
+  },
+  "required": ["verdict", "recommended_action", "summary", "risk_flags", "conditions_to_proceed"]
+}
