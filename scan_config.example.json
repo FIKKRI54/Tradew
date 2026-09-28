@@ -38,6 +38,7 @@
   "minimum_ladder_span_atr_fraction": 0.25,
   "minimum_ladder_span_spread_multiple": 2.0,
   "minimum_layer_stop_atr_fraction": 0.25,
+  "controlling_zone_max_distance_atr": 3.0,
   "independent_reachability_base_atr": 0.75,
   "independent_reachability_per_minute_atr": 0.025,
   "independent_reachability_floor_atr": 0.85,

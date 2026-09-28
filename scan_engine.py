@@ -2,7 +2,7 @@
 import math
 from decimal import Decimal, ROUND_FLOOR
 
-RULE_VERSION = 'structure-research-29'
+RULE_VERSION = 'structure-research-30'
 TIMEFRAMES = {'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600,
               'H4': 14400, 'D1': 86400}
 TIMEFRAME_WEIGHTS = {'H4': 15, 'H1': 15, 'M30': 10, 'M15': 10, 'M5': 25, 'M1': 10}
@@ -58,6 +58,13 @@ def structure(bars, tolerance, config=None):
 
 def _classify_zone(zone, bars_by_timeframe, as_of_time, invalidation_tolerance):
     members = zone.pop('members', [])
+    confirmation_times = [
+        member['confirmed_bar'] + TIMEFRAMES[member['timeframe']]
+        for member in members
+        if isinstance(member.get('confirmed_bar'), (int, float)) and
+        member.get('timeframe') in TIMEFRAMES
+    ]
+    zone['confirmed_time'] = max(confirmation_times) if confirmation_times else None
     if bars_by_timeframe is None:
         zone.update(status='unknown', active=False, active_sources=[],
                     broken_sources=[], unknown_sources=list(zone['sources']),
@@ -199,6 +206,60 @@ def opposing_targets(zones, direction, entry, buffer, current_price=None, spread
     return [target for _, target in sorted(candidates)[:2]]
 
 
+def _zone_known_for_setup(zone, confirmation_time):
+    confirmed = zone.get('confirmed_time')
+    return (zone.get('status') == 'active' and
+            (confirmed is None or confirmed <= confirmation_time))
+
+
+def controlling_entry_zone(zones, direction, local_invalidation, current_bid,
+                           confirmation_time, m5_atr, tolerance, config):
+    """Find a stronger pending zone that makes a local M5 setup premature."""
+    kind = 'DEMAND' if direction == 'BUY' else 'SUPPLY'
+    maximum_distance = max(0.0, float(m5_atr or 0)) * float(
+        config.get('controlling_zone_max_distance_atr', 3.0))
+    candidates = []
+    for zone in zones:
+        sources = set(zone.get('active_sources') or [])
+        if (zone.get('kind') != kind or
+                not sources.intersection({'M15', 'M30', 'H1', 'H4', 'D1'}) or
+                not _zone_known_for_setup(zone, confirmation_time)):
+            continue
+        if direction == 'BUY':
+            pending = zone['high'] < current_bid-tolerance
+            beyond_invalidation = zone['high'] < local_invalidation-tolerance
+            distance = current_bid-zone['high']
+        else:
+            pending = zone['low'] > current_bid+tolerance
+            beyond_invalidation = zone['low'] > local_invalidation+tolerance
+            distance = zone['low']-current_bid
+        if not pending or not beyond_invalidation:
+            continue
+        if maximum_distance > 0 and distance > maximum_distance:
+            continue
+        candidates.append((distance, -(zone.get('active_strength') or 0),
+                           float(zone.get('price') or zone['low']), zone))
+    return min(candidates)[3] if candidates else None
+
+
+def overlapping_protection_zone(zones, direction, planned_zone,
+                                confirmation_time):
+    """Return the strongest active M15+ zone overlapping the entry zone."""
+    kind = 'DEMAND' if direction == 'BUY' else 'SUPPLY'
+    candidates = []
+    for zone in zones:
+        sources = set(zone.get('active_sources') or [])
+        overlaps = (zone.get('low', float('inf')) <= planned_zone.get('high', float('-inf')) and
+                    zone.get('high', float('-inf')) >= planned_zone.get('low', float('inf')))
+        if (zone.get('kind') == kind and overlaps and
+                sources.intersection({'M15', 'M30', 'H1', 'H4', 'D1'}) and
+                _zone_known_for_setup(zone, confirmation_time)):
+            candidates.append(((zone.get('active_strength') or 0),
+                               len(sources), float(zone.get('price') or zone['low']),
+                               zone))
+    return max(candidates)[3] if candidates else None
+
+
 def context_gate(contexts, direction, setup, score, config):
     """Hard eligibility gate; heuristic context is no longer display-only."""
     expected = 'bullish' if direction == 'BUY' else 'bearish'
@@ -248,16 +309,19 @@ def confirmed_retest(bars, zone, direction, after_time):
 
 
 def planned_ladder_reward_risk(plan):
-    """Gross price-distance R:R across risk-weighted pending layers."""
+    """Gross price-distance R:R normalized across retained risk weights."""
     sign = 1 if plan['direction'] == 'BUY' else -1
     values = []
+    weights = []
     for layer in plan.get('limit_layers') or []:
         risk = sign*(layer['price']-plan['stop'])
         reward = sign*(layer['target']-layer['price'])
         if risk <= 0 or reward <= 0:
             return None
-        values.append(float(layer['risk_weight'])*reward/risk)
-    return sum(values) if values else None
+        weight = float(layer['risk_weight'])
+        values.append(weight*reward/risk)
+        weights.append(weight)
+    return sum(values)/sum(weights) if values and sum(weights) > 0 else None
 
 
 def market_session(epoch):
@@ -552,9 +616,10 @@ def evaluate(snapshot, config, broker, contexts=None):
         result['buy_setup_score' if kind == 0 else 'sell_setup_score'] = score
         if confirmed and targets and sign * (entry - stop) > 0:
             gated = {**setup, '_context_failures': context_gate(
-                contexts, direction, setup, score, config)}
+                contexts, direction, setup, score, config), '_all_zones': zones}
             candidates.append((direction, kind, level, entry, stop, targets, score, gated))
     result['setup_state'] = setups[-1]['state'] if setups and not candidates else 'WATCH_LEVEL'
+    result['setup_lifecycle'] = 'DETECTED' if setups else 'SCANNING'
     buy_level = prior['high'][-1]['price'] + buffer if prior['high'] else None
     sell_level = prior['low'][-1]['price'] - buffer if prior['low'] else None
     triggers = []
@@ -572,7 +637,8 @@ def evaluate(snapshot, config, broker, contexts=None):
         return result
     evaluated = [_evaluate_candidate(snapshot, config, broker, dict(result), candidate, buffer)
                  for candidate in sorted(candidates, key=lambda c: c[6], reverse=True)]
-    state_rank = {'ACTIONABLE': 6, 'ARMED_LIMIT': 5, 'WAIT_RETEST': 4,
+    state_rank = {'ACTIONABLE': 7, 'ARMED_LIMIT': 6, 'WAIT_RETEST': 5,
+                  'WATCH_ZONE': 4,
                   'CONFIRMED': 3, 'WATCH_LEVEL': 2, 'FILTERED': 1,
                   'INVALIDATED': 0, 'EXPIRED': 0}
     chosen = max(evaluated, key=lambda item: (
@@ -591,6 +657,7 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
     result['setup_id'] = f"{snapshot['symbol']}:{setup['family']}:{direction}:{setup['confirmation_time']}:{level}"
     result['setup_family'] = setup['family']
     result['setup_state'] = 'CONFIRMED'
+    result['setup_lifecycle'] = 'DETECTED'
     result['invalidation'] = stop
     result['chart_confirmation'] = setup.get('chart_patterns') or []
     result['order_block'] = setup.get('order_block')
@@ -602,6 +669,31 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         config['limit_entry_atr_fraction'])
     result['planned_entry_zone'] = (setup.get('entry_zone') or
                                     limit_entry_zone(level, direction, limit_width))
+    all_zones = setup.get('_all_zones') or []
+    m5_atr = (result.get('structure', {}).get('M5', {}).get('atr14_simple') or 0)
+    tolerance = float(config.get('structural_tolerance') or 0)
+    stronger_zone = controlling_entry_zone(
+        all_zones, direction, setup['invalidation'], snapshot['tick']['bid'],
+        setup['confirmation_time'], m5_atr, tolerance, config)
+    protection_zone = overlapping_protection_zone(
+        all_zones, direction, result['planned_entry_zone'],
+        setup['confirmation_time'])
+    effective_invalidation = setup['invalidation']
+    if protection_zone:
+        effective_invalidation = (
+            min(effective_invalidation, protection_zone['low']) if direction == 'BUY'
+            else max(effective_invalidation, protection_zone['high']))
+        protection_buffer = max(
+            buffer, result['spread']*2,
+            m5_atr*float(config.get('minimum_layer_stop_atr_fraction', .25)))
+        spec = snapshot['specifications'][snapshot['symbol']]
+        step = spec['trade_tick_size']
+        stop_raw = (effective_invalidation-protection_buffer if direction == 'BUY'
+                    else effective_invalidation+protection_buffer)
+        stop = ((math.floor(stop_raw/step) if direction == 'BUY'
+                 else math.ceil(stop_raw/step))*step)
+        result['invalidation'] = stop
+        result['protection_zone'] = protection_zone
     result['planned_targets'] = targets
     result['planned_direction'] = direction
     result['entry_plan'] = {
@@ -611,7 +703,7 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
                     ('login', 'server', 'mode', 'currency')},
         'zone': result['planned_entry_zone'], 'level': level,
         'setup_family': setup['family'],
-        'structural_invalidation': setup['invalidation'],
+        'structural_invalidation': effective_invalidation,
         'stop': stop, 'targets': targets,
         'confirmation_time': setup['confirmation_time'],
         'expires_at': (setup['confirmation_time'] +
@@ -619,16 +711,22 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
                        config['timestamp_offset_seconds']),
         'risk_fraction': config['balance_risk_fraction'],
         'cost_per_lot': config['cost_per_lot'],
-        'm5_atr': (result.get('structure', {}).get('M5', {}).get('atr14_simple') or 0),
+        'm5_atr': m5_atr,
+        'broker_minimum_distance': max(
+            snapshot['specifications'][snapshot['symbol']].get('trade_stops_level', 0),
+            snapshot['specifications'][snapshot['symbol']].get('trade_freeze_level', 0)) *
+            snapshot['specifications'][snapshot['symbol']]['point'],
     }
-    from limit_ladder import attach_limit_ladder
+    from limit_ladder import attach_limit_ladder, preflight_ladder_layers
     result['entry_plan'] = attach_limit_ladder(
+        result['entry_plan'], snapshot['tick']['bid'], snapshot['tick']['ask'], config)
+    result['entry_plan'] = preflight_ladder_layers(
         result['entry_plan'], snapshot['tick']['bid'], snapshot['tick']['ask'], config)
     # Structure is measured on bid candles; executable entry still uses ask for BUY.
     structural_price = snapshot['tick']['bid']
-    if sign * (structural_price - setup['invalidation']) <= 0:
+    if sign * (structural_price - effective_invalidation) <= 0:
         result['setup_state'] = 'INVALIDATED'
-        result['reasons'] = [f"Live bid {structural_price:.2f} breached setup invalidation {setup['invalidation']:.2f}"]
+        result['reasons'] = [f"Live bid {structural_price:.2f} breached setup invalidation {effective_invalidation:.2f}"]
         result['next_trigger'] = 'Wait for a new completed M5 setup'
         return result
     if sign * (structural_price - level) <= 0:
@@ -646,15 +744,59 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
     context_failures = setup.get('_context_failures') or []
     if context_failures:
         result['setup_state'] = 'FILTERED'
+        result['setup_lifecycle'] = 'DETECTED'
         result['reasons'] = ['Context gate: ' + failure for failure in context_failures[:3]]
         result['next_trigger'] = 'Wait for a new setup with aligned higher-timeframe structure and sufficient quality'
         return result
-    ladder_span = result['entry_plan'].get('limit_ladder_span')
-    required_span = result['entry_plan'].get('minimum_limit_ladder_span')
-    if (not isinstance(ladder_span, (int, float)) or
-            not isinstance(required_span, (int, float)) or
-            ladder_span+1e-9 < required_span):
+    if stronger_zone:
+        watch_zone = {
+            'low': stronger_zone['low'], 'high': stronger_zone['high'],
+            'kind': stronger_zone['kind'],
+            'sources': stronger_zone.get('active_sources') or stronger_zone.get('sources') or [],
+            'strength': stronger_zone.get('active_strength') or stronger_zone.get('strength'),
+            'trigger_side': 'BID', 'direction': direction,
+        }
+        result['setup_state'] = 'WATCH_ZONE'
+        result['setup_lifecycle'] = 'WATCH_ZONE'
+        result['watch_entry_zone'] = watch_zone
+        result['planned_entry_zone'] = watch_zone
+        result['entry_plan'] = None
+        result['entry_checks'] = {
+            'local_setup_zone': setup.get('entry_zone'),
+            'local_invalidation': setup['invalidation'],
+            'controlling_zone': watch_zone,
+            'decision': 'defer_local_plan_until_fresh_controlling_zone_confirmation',
+        }
+        source_text = '/'.join(watch_zone['sources']) or 'higher timeframe'
+        result['reasons'] = [
+            f'{setup["family"]}: local M5 pattern detected but not armed',
+            (f'Active {source_text} {watch_zone["kind"].lower()} at '
+             f'{watch_zone["low"]:.2f}-{watch_zone["high"]:.2f} lies beyond the '
+             'local setup invalidation'),
+            'A fresh completed rejection at the controlling zone is required; the old local thesis is not promoted',
+        ]
+        result['next_trigger'] = (
+            f'Fresh completed M5 {direction} rejection at '
+            f'{watch_zone["low"]:.2f}-{watch_zone["high"]:.2f}, followed by M1 confirmation')
+        return result
+    from limit_ladder import ladder_quality_acceptable
+    ladder_ok, ladder_span, required_span = ladder_quality_acceptable(
+        result['entry_plan'], snapshot['tick']['bid'], snapshot['tick']['ask'], config)
+    if not result['entry_plan'].get('limit_layers'):
         result['setup_state'] = 'FILTERED'
+        result['setup_lifecycle'] = 'DETECTED'
+        rejected = result['entry_plan'].get('preflight_rejected_layers') or []
+        reason_codes = sorted({reason for item in rejected for reason in item.get('reasons', [])})
+        result['reasons'] = [
+            'No ladder layer passed deterministic preflight',
+            'Failed checks: ' + ', '.join(reason_codes) if reason_codes else
+            'Entry geometry is not executable at the current quote',
+        ]
+        result['next_trigger'] = 'Wait for a fresh setup with valid pending prices, protection, and TP1 room'
+        return result
+    if not ladder_ok:
+        result['setup_state'] = 'FILTERED'
+        result['setup_lifecycle'] = 'DETECTED'
         result['reasons'] = [
             f'Limit ladder span {ladder_span or 0:.2f} is below the required {required_span or 0:.2f}']
         result['next_trigger'] = 'Wait for a setup with a wider grounded entry range'
@@ -663,6 +805,9 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
     result['entry_checks'] = {
         'planned_ladder_reward_risk': planned_rr,
         'minimum_ladder_reward_risk': config['minimum_ladder_reward_risk'],
+        'layers_requested': result['entry_plan'].get('preflight_layers_requested'),
+        'layers_eligible': result['entry_plan'].get('preflight_layers_eligible'),
+        'rejected_layers': result['entry_plan'].get('preflight_rejected_layers') or [],
     }
     if planned_rr is None or planned_rr < config['minimum_ladder_reward_risk']:
         result['setup_state'] = 'FILTERED'
@@ -684,6 +829,7 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         snapshot['bars']['M1'][:-1], zone, direction, setup['confirmation_time'])
     if retest_time is None:
         result['setup_state'] = 'WAIT_RETEST'
+        result['setup_lifecycle'] = 'CONFIRMING'
         result['reasons'] = [
             f'{setup["family"]}: completed M5 setup passed context filters',
             f'Waiting for a completed M1 retest and rejection inside {zone["low"]:.2f}-{zone["high"]:.2f}',
@@ -704,6 +850,7 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         result['reasons'] = ['Entry plan blocked: ' + blocked]
         return result
     result['setup_state'] = 'ARMED_LIMIT'
+    result['setup_lifecycle'] = 'ARMED_LIMIT'
     pattern_text = ', '.join(label.replace('_', ' ') for label in result['chart_confirmation'])
     result.update(
         action='WAIT', stop=stop, targets=targets,

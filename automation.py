@@ -185,7 +185,8 @@ def _independent_market_event(decision):
     score = max(decision.get('buy_setup_score') or 0,
                 decision.get('sell_setup_score') or 0)
     if (decision.get('action') in ('BUY', 'SELL') or
-            decision.get('setup_state') in ('WATCH_LEVEL', 'CONFIRMED', 'ARMED_LIMIT')):
+            decision.get('setup_state') in ('WATCH_LEVEL', 'WATCH_ZONE',
+                                             'CONFIRMED', 'ARMED_LIMIT')):
         if score >= MIN_SCORE:
             return 'candidate:'+str(decision.get('setup_id') or decision.get('setup_state'))
     completed = ((decision.get('chart_data') or {}).get('M5') or [])[:-1]
@@ -219,6 +220,9 @@ def consider_automatic_review(decision, settings=None):
     if settings.get('paused', False):
         return False
     if settings['entry_mode'] == 'deterministic':
+        return False
+    if (settings['entry_mode'] == 'reviewed' and
+            plan_direction(decision) not in ('BUY', 'SELL')):
         return False
     key = decision_review_key(decision)
     if settings['entry_mode'] == 'independent':
@@ -283,7 +287,7 @@ def _review_loop():
             if (job['mode'] != 'independent' and decision.get('entry_plan') and
                     time.time() >= decision['entry_plan']['expires_at']):
                 continue
-            if (job['mode'] == 'consensus' and
+            if (job['mode'] in ('reviewed', 'consensus') and
                     approved_plan(decision, {'entry_mode': job['mode'],
                                              'provider': job['provider']})):
                 continue
@@ -301,6 +305,10 @@ def _review_loop():
                 review = review_decision(decision, job['provider'], main.ROOT)
                 review['automatic'] = True
                 cache_review(review)
+            elif job['mode'] == 'reviewed':
+                review = review_decision(decision, job['provider'], main.ROOT)
+                review['automatic'] = True
+                cache_review(review)
             authorization = authorization_result(
                 job['mode'], decision, review, independent)
             authorization['provider'] = job['provider']
@@ -310,7 +318,7 @@ def _review_loop():
                               active_settings['entry_mode'] == job['mode'] and
                               active_settings['provider'] == job['provider'] and
                               job['generation'] == _approval_generation)
-            if (job['mode'] == 'consensus' and settings_match and
+            if (job['mode'] in ('reviewed', 'consensus') and settings_match and
                     authorization['status'] == 'AUTHORIZED' and plan_key(decision)):
                 with _state_lock:
                     if (job['generation'] == _approval_generation and

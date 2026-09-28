@@ -459,7 +459,7 @@ class RulesTest(unittest.TestCase):
 
     def test_rule_version_identifies_native_pending_logic(self):
         from scan_engine import RULE_VERSION
-        self.assertEqual(RULE_VERSION, 'structure-research-29')
+        self.assertEqual(RULE_VERSION, 'structure-research-30')
 
     def test_terminal_setup_cannot_resurrect(self):
         from setup_tracker import SetupTracker

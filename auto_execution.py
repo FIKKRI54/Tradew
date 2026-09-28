@@ -112,6 +112,33 @@ def authorization_result(mode, decision, review_result=None, independent_result=
                 'blockers': ['deterministic_action_not_actionable'], 'errors': []}
     if mode == 'deterministic':
         return {**base, 'status': 'AUTHORIZED'}
+    if mode == 'reviewed':
+        review = (review_result or {}).get('review') or {}
+        same_snapshot = bool(decision.get('snapshot_id')) and (
+            (review_result or {}).get('snapshot_id') == decision['snapshot_id'])
+        agrees = (review.get('status') == 'ok' and
+                  review.get('verdict') == 'AGREE' and
+                  review.get('recommended_action') == direction)
+        blockers = []
+        if not same_snapshot:
+            blockers.append('analysis_snapshot_mismatch')
+        if not agrees:
+            blockers.append(
+                'informed_review_unavailable' if review.get('status') == 'unavailable'
+                else 'informed_review_did_not_agree' if review
+                else 'informed_review_not_run')
+        errors = ([review.get('error')]
+                  if review.get('status') == 'unavailable' and review.get('error')
+                  else [])
+        return {
+            **base, 'same_snapshot': same_snapshot,
+            'gemini_review': review.get('recommended_action'),
+            'gemini_verdict': review.get('verdict'),
+            'review_status': review.get('status'),
+            'signal_origin': 'reviewed_deterministic',
+            'status': 'AUTHORIZED' if same_snapshot and agrees else 'NO_AUTHORIZATION',
+            'blockers': blockers, 'errors': errors,
+        }
     independent_agrees = (
         independent.get('status') == 'ok' and
         independent.get('recommended_action') == direction and

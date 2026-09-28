@@ -16,8 +16,11 @@ Tradew is an experimental XAUUSD scanner and MT5 execution controller. It combin
 The available automatic entry modes are:
 
 - `deterministic`: uses only the built-in rules.
+- `reviewed`: an informed LLM may veto the exact deterministic plan; it does not
+  create a separate blind plan.
 - `independent`: an LLM proposes a complete blind plan; deterministic code validates it before submission.
-- `consensus`: the deterministic plan must also pass the configured LLM review.
+- `consensus`: the deterministic plan must match both an informed review and a
+  separate blind independent read.
 
 ## Project layout
 

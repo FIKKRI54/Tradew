@@ -4,6 +4,7 @@ import math
 
 DEFAULT_WEIGHTS = (0.25, 0.35, 0.40)
 REDUCED_SINGLE_PROFILE = 'single_limit_reduced_risk'
+PREFLIGHT_SUBSET_PROFILE = 'preflight_validated_subset'
 
 
 def ladder_span_metrics(plan, bid, ask, config):
@@ -87,7 +88,101 @@ def ladder_quality_acceptable(plan, bid, ask, config):
     actual, required = ladder_span_metrics(plan, bid, ask, config)
     accepted = (actual is not None and required is not None and
                 actual+1e-9 >= required)
-    return accepted or reduced_single_limit_valid(plan, config), actual, required
+    subset = plan.get('ladder_execution_profile') == PREFLIGHT_SUBSET_PROFILE
+    subset_accepted = (
+        subset and bool(plan.get('limit_layers')) and
+        isinstance(plan.get('preflight_original_span'), (int, float)) and
+        isinstance(plan.get('minimum_limit_ladder_span'), (int, float)) and
+        plan['preflight_original_span']+1e-9 >= plan['minimum_limit_ladder_span'] and
+        all(check.get('eligible') for check in
+            (plan.get('preflight_layer_checks') or [])) and
+        len(plan.get('preflight_layer_checks') or []) == len(plan['limit_layers']))
+    return (accepted or reduced_single_limit_valid(plan, config) or subset_accepted,
+            actual, required)
+
+
+def preflight_ladder_layers(plan, bid, ask, config):
+    """Remove deterministically unusable layers before a plan can be armed.
+
+    The broker adapter repeats these checks with exact symbol economics.  This
+    early pass prevents the UI and the authorization layer from advertising
+    prices that already fail direction, stop-distance, or banked-TP1 geometry.
+    Removed risk is not redistributed to the remaining layers.
+    """
+    if not isinstance(plan, dict) or plan.get('direction') not in ('BUY', 'SELL'):
+        raise ValueError('A directional plan is required for layer preflight')
+    original_layers = plan.get('limit_layers') or []
+    original_span, required_span = ladder_span_metrics(plan, bid, ask, config)
+    direction = plan['direction']
+    sign = 1 if direction == 'BUY' else -1
+    spread = max(0.0, ask-bid)
+    broker_minimum = max(0.0, float(plan.get('broker_minimum_distance') or 0))
+    protected_distance = max(
+        broker_minimum,
+        spread*2,
+        float(plan.get('m5_atr') or 0) *
+        float(config.get('minimum_layer_stop_atr_fraction', .25)))
+    close_fraction = float(config.get('take_profit_close_fraction', .65))
+    minimum_rr = float(config.get('minimum_ladder_reward_risk', 0))
+    eligible = []
+    checks = []
+    rejected = []
+    for layer in original_layers:
+        price = layer.get('price')
+        target = layer.get('target')
+        reasons = []
+        if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and
+                   math.isfinite(value) for value in (price, target, plan.get('stop'))):
+            reasons.append('invalid_geometry')
+            risk = reward = banked_rr = None
+        else:
+            pending = price < ask if direction == 'BUY' else price > bid
+            if not pending:
+                reasons.append('not_pending_at_current_quote')
+            pending_distance = ask-price if direction == 'BUY' else price-bid
+            if pending and pending_distance+1e-9 < broker_minimum:
+                reasons.append('pending_distance_below_broker_minimum')
+            risk = sign*(price-plan['stop'])
+            reward = sign*(target-price)
+            if risk <= 0 or reward <= 0:
+                reasons.append('invalid_reward_or_stop_geometry')
+                banked_rr = None
+            else:
+                if risk+1e-9 < protected_distance:
+                    reasons.append('stop_distance_below_protected_minimum')
+                banked_rr = close_fraction*reward/risk
+                if banked_rr+1e-9 < minimum_rr:
+                    reasons.append('banked_tp1_reward_risk_below_minimum')
+        check = {
+            'index': layer.get('index'), 'quality': layer.get('quality'),
+            'price': price, 'eligible': not reasons, 'reasons': reasons,
+            'stop_distance': risk, 'protected_stop_distance': protected_distance,
+            'banked_tp1_reward_risk': banked_rr,
+        }
+        if reasons:
+            rejected.append(check)
+        else:
+            eligible.append(dict(layer))
+            checks.append(check)
+    risk_fraction = float(plan.get('risk_fraction') or 0)
+    result = {
+        **plan,
+        'limit_layers': eligible,
+        'preflight_layers_requested': len(original_layers),
+        'preflight_layers_eligible': len(eligible),
+        'preflight_layer_checks': checks,
+        'preflight_rejected_layers': rejected,
+        'preflight_original_span': original_span,
+        'minimum_limit_ladder_span': required_span,
+        'limit_ladder_total_risk_fraction':
+            risk_fraction*sum(float(layer.get('risk_weight') or 0)
+                              for layer in eligible),
+    }
+    if len(eligible) != len(original_layers) and eligible:
+        result['ladder_execution_profile'] = PREFLIGHT_SUBSET_PROFILE
+    actual, _ = ladder_span_metrics(result, bid, ask, config)
+    result['limit_ladder_span'] = actual
+    return result
 
 
 def attach_limit_ladder(plan, bid, ask, config):

@@ -141,7 +141,8 @@ def _retest_blocker(m, symbol, plan, direction):
                                         'structure-research-24',
                                         'structure-research-25',
                                         'structure-research-26', 'structure-research-27',
-                                        'structure-research-28', 'structure-research-29'):
+                                        'structure-research-28', 'structure-research-29',
+                                        'structure-research-30'):
         return None
     retest_time = plan.get('retest_confirmation_time')
     if (not isinstance(retest_time, (int, float)) or isinstance(retest_time, bool) or
@@ -601,6 +602,7 @@ class MT5Adapter:
                                         'independent-auto-26', 'structure-research-27',
                                         'independent-auto-27', 'structure-research-28',
                                         'independent-auto-28', 'structure-research-29',
+                                        'structure-research-30',
                                         'independent-auto-29'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(
@@ -834,6 +836,7 @@ class MT5Adapter:
                                         'independent-auto-26', 'structure-research-27',
                                         'independent-auto-27', 'structure-research-28',
                                         'independent-auto-28', 'structure-research-29',
+                                        'structure-research-30',
                                         'independent-auto-29'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(

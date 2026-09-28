@@ -123,9 +123,8 @@ Exact numerical cutoffs were not established in the conversation. Treat them as 
 ## 7. Setup state machine
 
 ```text
-NO_SETUP -> WATCH_LEVEL -> CONFIRMED -> ARMED_LIMIT -> ACTIONABLE
-                    \-> INVALIDATED       \-> INVALIDATED / EXPIRED
-CONFIRMED -> EXPIRED / INVALIDATED / ARMED_LIMIT
+NO_SETUP -> DETECTED -> WATCH_LEVEL / WATCH_ZONE -> CONFIRMING -> ARMED_LIMIT -> ACTIONABLE
+                         \-> INVALIDATED / EXPIRED              \-> INVALIDATED / EXPIRED
 ACTIONABLE -> EXPIRED / INVALIDATED
 ```
 
@@ -155,6 +154,20 @@ Do not chase a move simply because the earlier trigger worked. A confirmed setup
 Research rule version 23 retains objective completed-candle engulfing, rejection, two/three-soldier or crow, displacement, order-block, liquidity, and confirmed multi-timeframe supply/demand evidence. These labels are fixed calculations rather than LLM chart interpretation. Entry cash risk is sized from the configured fraction of current account balance. Runtime authorization may use deterministic-only, blind-independent, or full-consensus mode. A broker-valid new entry is split on hedging accounts into a 65% TP1 child and 35% no-TP runner while preserving total volume and initial risk; unsplittable minimum volumes remain a single TP1 child. The runner may receive only risk-reducing stop changes before TP1 and becomes eligible for confirmed-M5 structural trailing after TP1 is verified from quote or broker history. Automatic stop management never widens risk. Cash, margin, broker-distance, fresh-data, authorization, and duplicate-setup limits remain mandatory.
 
 Research rule version 24 removes the realized daily-loss entry brake. A prior loss total from the current UTC day no longer blocks an otherwise valid new submission. Post-loss cooldown, consecutive-loss, session-entry, exposure, margin, broker-distance, fresh-data, authorization, structural-validity, and duplicate-setup controls remain active. Production replay follows the same rule.
+
+Research rule version 30 makes zone hierarchy and execution eligibility explicit. A
+local M5 pattern is deferred as `WATCH_ZONE` when an active, already-confirmed M15+
+entry zone lies beyond the local thesis invalidation; the old pattern is never
+silently promoted into that different thesis. A fresh completed M5 rejection and
+M1 confirmation are required at the controlling zone. When the setup already
+overlaps its controlling zone, protection is placed beyond the full zone plus the
+largest of the strategy buffer, twice the spread, or 0.25 M5 ATR. Each ladder layer
+must pass pending-side, protected-stop-distance, and banked-TP1 reward/risk
+preflight before `ARMED_LIMIT`; rejected layer risk is not redistributed. MT5
+repeats exact cash, margin, distance, and order checks. Replay consumes the same
+version-30 evaluator and eligible layer set. `reviewed` authorization sends the
+exact deterministic plan to one informed LLM and requires same-snapshot `AGREE`;
+it does not run or trade a blind independent plan.
 
 ### Example from the session
 

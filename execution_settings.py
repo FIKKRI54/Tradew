@@ -9,14 +9,15 @@ DEFAULTS = {
     'auto_trailing': True,
     'paused': False,
 }
-ENTRY_MODES = {'deterministic', 'independent', 'consensus'}
+ENTRY_MODES = {'deterministic', 'reviewed', 'independent', 'consensus'}
 PROVIDERS = {'gemini', 'astra'}
 
 
 def _validated(value):
     settings = {**DEFAULTS, **(value if isinstance(value, dict) else {})}
     if settings['entry_mode'] not in ENTRY_MODES:
-        raise ValueError('entry_mode must be deterministic, independent, or consensus')
+        raise ValueError(
+            'entry_mode must be deterministic, reviewed, independent, or consensus')
     if settings['provider'] not in PROVIDERS:
         raise ValueError('provider must be gemini or astra')
     if not isinstance(settings['auto_trailing'], bool):
