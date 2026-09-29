@@ -49,7 +49,8 @@ def reduced_single_limit_valid(plan, config):
                                          'independent-auto-25',
                                          'independent-auto-26', 'independent-auto-27',
                                          'independent-auto-28', 'independent-auto-29',
-                                         'independent-auto-30') or
+                                         'independent-auto-30',
+                                         'independent-auto-31') or
             plan.get('source') != 'independent_llm' or
             plan.get('ladder_execution_profile') != REDUCED_SINGLE_PROFILE):
         return False
@@ -207,7 +208,8 @@ def attach_limit_ladder(plan, bid, ask, config):
     if not targets:
         raise ValueError('A limit ladder requires at least one target')
     if plan.get('rule_version') in ('independent-auto-27', 'independent-auto-28',
-                                    'independent-auto-29', 'independent-auto-30'):
+                                    'independent-auto-29', 'independent-auto-30',
+                                    'independent-auto-31'):
         # Never manufacture earlier entries from a live quote. Preserve the LLM's
         # exact entry, adding only independently verified, better-priced levels.
         verified = plan.get('verified_entry_prices') or []

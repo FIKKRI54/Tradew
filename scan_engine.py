@@ -2,7 +2,7 @@
 import math
 from decimal import Decimal, ROUND_FLOOR
 
-RULE_VERSION = 'structure-research-32'
+RULE_VERSION = 'structure-research-33'
 TIMEFRAMES = {'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600,
               'H4': 14400, 'D1': 86400}
 TIMEFRAME_WEIGHTS = {'H4': 15, 'H1': 15, 'M30': 10, 'M15': 10, 'M5': 25, 'M1': 10}
@@ -379,10 +379,10 @@ def counter_d1_risk_multiplier(contexts, direction, config):
 
 
 def context_gate(contexts, direction, setup, score, config):
-    """Reject explicit opposition while allowing mixed context and proven reversals."""
+    """Treat D1 as macro context; reject only clear intraday opposition."""
     expected = 'bullish' if direction == 'BUY' else 'bearish'
     opposite = 'bearish' if direction == 'BUY' else 'bullish'
-    higher = [contexts[name].get('trend') for name in ('H4', 'H1', 'M30')]
+    higher = [contexts[name].get('trend') for name in ('H4', 'H1')]
     opposed = sum(value == opposite for value in higher)
     failures = []
     reversal = m5_reversal_evidence(setup, direction)
@@ -390,8 +390,8 @@ def context_gate(contexts, direction, setup, score, config):
         'higher_timeframe_opposition_block_threshold', 2))
     if opposition_threshold and opposed >= opposition_threshold and not reversal:
         failures.append(
-            f'higher-timeframe opposition {opposed}/3 meets the '
-            f'{opposition_threshold}/3 blocking threshold without M5 reversal evidence')
+            f'H1/H4 opposition {opposed}/2 meets the '
+            f'{opposition_threshold}/2 blocking threshold without M5 reversal evidence')
     if score < config.get('minimum_setup_score', 0):
         failures.append(
             f'setup score {score:.0f} is below {config.get("minimum_setup_score", 0):.0f}')
@@ -399,12 +399,6 @@ def context_gate(contexts, direction, setup, score, config):
         failures.append('M15 development opposes the setup without M5 reversal evidence')
     if contexts['M5'].get('trend') == opposite and not reversal:
         failures.append('M5 trend opposes the setup without M5 reversal evidence')
-    # D1 remains macro context rather than an entry trigger. It becomes a hard
-    # veto only when H4 explicitly agrees with it and M5 supplies no reversal.
-    if (contexts['D1'].get('trend') == opposite and
-            contexts['H4'].get('trend') == opposite and not reversal and
-            not (opposition_threshold and opposed >= opposition_threshold)):
-        failures.append('D1 and H4 oppose the setup without M5 reversal evidence')
     return failures
 
 
@@ -538,7 +532,7 @@ def validate(snapshot, config):
         flags.append('Invalid take_profit_close_fraction')
     opposition = config.get('higher_timeframe_opposition_block_threshold')
     if (not isinstance(opposition, int) or isinstance(opposition, bool) or
-            not 0 <= opposition <= 3):
+            not 0 <= opposition <= 2):
         flags.append('Invalid higher_timeframe_opposition_block_threshold')
     d1_penalty = config.get('counter_d1_score_penalty')
     if (not isinstance(d1_penalty, (int, float)) or isinstance(d1_penalty, bool) or

@@ -73,7 +73,7 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(reference['close'], snapshot['bars']['D1'][-2]['close'])
         self.assertIn('never an entry trigger', reference['role'])
 
-    def test_d1_alone_is_a_modifier_but_d1_with_h4_requires_reversal(self):
+    def test_d1_never_blocks_entry_even_when_h4_also_opposes(self):
         contexts = {name: {'trend': 'mixed'} for name in TIMEFRAMES}
         contexts.update(H4={'trend': 'mixed'}, H1={'trend': 'mixed'},
                         M30={'trend': 'bullish'}, D1={'trend': 'bearish'})
@@ -82,13 +82,8 @@ class RulesTest(unittest.TestCase):
         failures = context_gate(contexts, 'BUY', {'chart_patterns': []}, 80, config)
         self.assertEqual(failures, [])
         contexts['H4']['trend'] = 'bearish'
-        message = 'D1 and H4 oppose the setup without M5 reversal evidence'
-        self.assertIn(message, context_gate(
-            contexts, 'BUY', {'chart_patterns': []}, 80, config))
-        reversed_failures = context_gate(
-            contexts, 'BUY', {'family': 'order_block_retest',
-                              'chart_patterns': []}, 80, config)
-        self.assertNotIn(message, reversed_failures)
+        self.assertEqual(context_gate(
+            contexts, 'BUY', {'chart_patterns': []}, 80, config), [])
 
     def test_two_explicit_higher_timeframe_opponents_block_without_reversal(self):
         contexts = {name: {'trend': 'mixed'} for name in TIMEFRAMES}
@@ -96,7 +91,7 @@ class RulesTest(unittest.TestCase):
                         M30={'trend': 'mixed'}, D1={'trend': 'bullish'})
         config = {'higher_timeframe_opposition_block_threshold': 2,
                   'minimum_setup_score': 0}
-        message = ('higher-timeframe opposition 2/3 meets the 2/3 blocking '
+        message = ('H1/H4 opposition 2/2 meets the 2/2 blocking '
                    'threshold without M5 reversal evidence')
         self.assertIn(message, context_gate(
             contexts, 'BUY', {'family': 'breakout_follow_through',
@@ -503,7 +498,7 @@ class RulesTest(unittest.TestCase):
 
     def test_rule_version_identifies_native_pending_logic(self):
         from scan_engine import RULE_VERSION
-        self.assertEqual(RULE_VERSION, 'structure-research-32')
+        self.assertEqual(RULE_VERSION, 'structure-research-33')
 
     def test_terminal_setup_cannot_resurrect(self):
         from setup_tracker import SetupTracker

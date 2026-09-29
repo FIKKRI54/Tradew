@@ -116,7 +116,7 @@ class LossCorrectionsV27Tests(unittest.TestCase):
     def test_supported_plan_preserves_exact_entry_and_risk_tier(self):
         s, live, a, c = self.independent_case()
         p = build_independent_execution_decision(s, live, a, c)['entry_plan']
-        self.assertEqual(p['rule_version'], 'independent-auto-30')
+        self.assertEqual(p['rule_version'], 'independent-auto-31')
         self.assertEqual([x['price'] for x in p['limit_layers']], [122])
         self.assertEqual(p['risk_fraction'], .2)
         self.assertAlmostEqual(p['limit_ladder_total_risk_fraction'], .05)

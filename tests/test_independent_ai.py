@@ -205,7 +205,7 @@ class IndependentAiTests(unittest.TestCase):
         planned = build_independent_execution_decision(source, live, analysis, config)
         self.assertEqual(planned['planned_direction'], 'BUY')
         self.assertEqual(planned['entry_plan']['source'], 'independent_llm')
-        self.assertEqual(planned['entry_plan']['rule_version'], 'independent-auto-30')
+        self.assertEqual(planned['entry_plan']['rule_version'], 'independent-auto-31')
         self.assertEqual(planned['entry_plan']['risk_tier'], 'MEDIUM')
         self.assertEqual(planned['entry_plan']['risk_fraction'], .2)
         self.assertEqual(planned['entry_plan']['pending_price'], 122)
@@ -279,6 +279,33 @@ class IndependentAiTests(unittest.TestCase):
         self.assertEqual(plan['risk_fraction'], .3)
         self.assertAlmostEqual(plan['limit_ladder_total_risk_fraction'], .075)
         self.assertIn('reduced-risk limit', planned['reasons'][0])
+
+    def test_d1_opposition_caps_high_risk_without_blocking_ready_plan(self):
+        source = decision_fixture()
+        source['snapshot_time'] = time.time()
+        source['positions_summary'] = {'positions': [], 'pending_orders': []}
+        for decision in (source,):
+            bars = decision['chart_data']['D1']
+            bars[-4]['close'] = 126
+            bars[-2]['close'] = 123
+        live = {**source, 'snapshot_id': 'live-d1-opposed',
+                'account_mode': 'demo'}
+        config = json.loads(Path('tests/fixtures/scan_config.json').read_text())
+        config['expected_mode'] = 'demo'
+        analysis = {'snapshot_id': source['snapshot_id'], 'analysis': {
+            'status': 'ok', 'setup_status': 'READY', 'recommended_action': 'BUY',
+            'risk_tier': 'HIGH', 'risk_reason': 'Strong intraday confirmation.',
+            'trade_plan': {
+                'direction': 'BUY', 'order_type': 'BUY_LIMIT',
+                'entry_price': 122, 'stop_loss': 120, 'take_profit': 125,
+                'confirmation_level': 121, 'structural_invalidation': 120,
+                'expires_in_minutes': 15}}}
+        plan = build_independent_execution_decision(source, live, analysis, config)['entry_plan']
+        self.assertTrue(plan['confirmation_evidence']['d1_macro_opposes'])
+        self.assertFalse(plan['confirmation_evidence']['countertrend'])
+        self.assertEqual(plan['risk_tier'], 'MEDIUM')
+        self.assertEqual(plan['risk_fraction'], .2)
+        self.assertIn('D1 macro opposition caps risk', plan['risk_reason'])
 
     def test_independent_execution_requires_source_and_live_active_opposing_zone(self):
         source = decision_fixture()

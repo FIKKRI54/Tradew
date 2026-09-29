@@ -172,10 +172,6 @@ def build_independent_execution_decision(source, live, independent_result, confi
     risk_fraction = independent_risk_fraction(risk_tier)
     if not isinstance(risk_reason, str) or not risk_reason.strip():
         raise ValueError('Independent plan requires a risk-tier reason')
-    configured_max = config.get('balance_risk_fraction')
-    if (not isinstance(configured_max, (int, float)) or
-            risk_fraction > configured_max+1e-12):
-        raise ValueError('Independent risk tier exceeds the configured account-risk cap')
     if raw.get('direction') != direction or raw.get('order_type') != direction+'_LIMIT':
         raise ValueError('Independent plan direction is inconsistent')
     if (live.get('symbol') != source.get('symbol') or live.get('data_quality') or
@@ -252,6 +248,14 @@ def build_independent_execution_decision(source, live, independent_result, confi
         raise ValueError('Independent plan expiry is invalid')
     from independent_validation import validate_independent_evidence
     evidence, verified_prices, m5_atr = validate_independent_evidence(source, live, raw, config)
+    if evidence.get('d1_macro_opposes') and risk_fraction > .2:
+        risk_tier = 'MEDIUM'
+        risk_fraction = .2
+        risk_reason = risk_reason.strip() + ' D1 macro opposition caps risk at MEDIUM.'
+    configured_max = config.get('balance_risk_fraction')
+    if (not isinstance(configured_max, (int, float)) or
+            risk_fraction > configured_max+1e-12):
+        raise ValueError('Independent risk tier exceeds the configured account-risk cap')
     confirmation_time = int(m5[-2]['time'])
     entry = float(prices['entry_price'])
     spread = ask-bid
@@ -263,7 +267,7 @@ def build_independent_execution_decision(source, live, independent_result, confi
                 f"{confirmation_time}:{entry}")
     setup_ref = hashlib.sha256(setup_id.encode('utf-8')).hexdigest()[:10]
     plan = {
-        'rule_version': 'independent-auto-30',
+        'rule_version': 'independent-auto-31',
         'confirmation_evidence': evidence, 'verified_entry_prices': verified_prices,
         'target_evidence': target_evidence,
         'source': 'independent_llm',

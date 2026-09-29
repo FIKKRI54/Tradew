@@ -1,8 +1,8 @@
 """Price-only validation of independent plans, without deterministic scores/actions.
 
-v30 permits a completed, aligned M5 displacement to anchor a shallow pullback
-entry and permits a reproducible intraday-pivot or fixed-ATR target when price
-discovery leaves no active opposing intraday zone. No prices are repaired.
+v31 keeps D1 as macro/risk context rather than an entry veto. Strict
+countertrend evidence is required only when both H1 and H4 oppose the plan.
+No prices are repaired.
 """
 import math
 
@@ -10,7 +10,7 @@ from scan_engine import atr
 from setups import candle_patterns
 
 
-VERSION = 'independent-auto-30'
+VERSION = 'independent-auto-31'
 FRAMES = ('M5', 'M15', 'M30', 'H1', 'H4', 'D1')
 INTRADAY_TARGET_FRAMES = ('M5', 'M15', 'M30', 'H1')
 
@@ -122,17 +122,22 @@ def confirmation_evidence(bars, direction, level, tolerance, countertrend=False)
             else max(b['high'] for b in bars[-2:])}
 
 
-def context_conflict(chart_data, direction):
-    """Use raw completed higher-timeframe price movement, not scanner bias labels."""
+def context_conflict(chart_data, direction, frames=('H1', 'H4')):
+    """Return explicit directional conflicts from raw completed candles."""
     sign = 1 if direction == 'BUY' else -1
     conflicts = []
-    for frame in ('H1', 'H4', 'D1'):
+    for frame in frames:
         bars = (chart_data.get(frame) or [])[:-1]
         if len(bars) < 3:
             raise ValueError('Independent higher-timeframe history is unavailable')
         if sign*(bars[-1]['close']-bars[-3]['close']) < 0:
             conflicts.append(frame)
     return conflicts
+
+
+def d1_macro_opposes(chart_data, direction):
+    """D1 can reduce risk, but never makes an otherwise valid plan countertrend."""
+    return bool(context_conflict(chart_data, direction, ('D1',)))
 
 
 def supported_entry(decision, direction, price, tolerance, higher_only=False):
@@ -162,7 +167,7 @@ def supported_entry(decision, direction, price, tolerance, higher_only=False):
 
 def momentum_entry_prices(decision, direction, proof, tolerance):
     """Derived prices allowed only from the latest aligned M5 displacement."""
-    if proof.get('conflicting_timeframes'):
+    if proof.get('countertrend'):
         return []
     expected = 'bullish_displacement' if direction == 'BUY' else 'bearish_displacement'
     if expected not in (proof.get('patterns') or []):
@@ -288,8 +293,13 @@ def validate_independent_evidence(source, live, raw, config):
     validate_market_freshness(live, atr_value, config)
     conflicts = context_conflict(source.get('chart_data') or {}, direction)
     conflicts = sorted(set(conflicts + context_conflict(live.get('chart_data') or {}, direction)))
-    proof = confirmation_evidence(bars, direction, raw['confirmation_level'], tolerance, bool(conflicts))
+    strict_countertrend = all(frame in conflicts for frame in ('H1', 'H4'))
+    d1_opposes = (d1_macro_opposes(source.get('chart_data') or {}, direction) or
+                  d1_macro_opposes(live.get('chart_data') or {}, direction))
+    proof = confirmation_evidence(
+        bars, direction, raw['confirmation_level'], tolerance, strict_countertrend)
     proof['conflicting_timeframes'] = conflicts
+    proof['d1_macro_opposes'] = d1_opposes
     # Compare the confirmed candle with the fresh dataset; later closes cannot reclaim it.
     live_bars = (live.get('chart_data') or {}).get('M5', [])[:-1]
     original = next((b for b in live_bars if b['time'] == proof['time']), None)
@@ -302,12 +312,14 @@ def validate_independent_evidence(source, live, raw, config):
                        for d in (source, live)]
     def supported(price):
         structural = all(supported_entry(
-            d, direction, price, tolerance, bool(conflicts)) for d in (source, live))
+            d, direction, price, tolerance, strict_countertrend) for d in (source, live))
         momentum = all(any(abs(price-anchor) <= tolerance for anchor in prices)
                        for prices in momentum_prices)
         return structural or momentum
     if not supported(raw['entry_price']):
-        raise ValueError('Independent entry lacks active M5+ structure (M15+ for countertrend)')
+        raise ValueError(
+            'Independent entry lacks active M5+ structure '
+            '(M15+ only when both H1 and H4 oppose)')
     reachability = entry_reachability(
         live, direction, raw['entry_price'], raw['expires_in_minutes'], atr_value, config)
     plan = {'direction': direction, 'pending_price': raw['entry_price'],
@@ -358,8 +370,9 @@ def broker_independent_blocker(m, symbol, plan, tick, config):
             return 'completed_m5_reclaim'
         tolerance = max(config.get('structural_tolerance', .1), tick.ask-tick.bid, .01)
         conflicts = context_conflict(chart, plan['direction'])
+        strict_countertrend = all(frame in conflicts for frame in ('H1', 'H4'))
         proof = confirmation_evidence(confirmed, plan['direction'], plan['level'], tolerance,
-                                      bool(conflicts or plan['confirmation_evidence']['countertrend']))
+                                      strict_countertrend)
         validate_market_freshness({
             'session': plan.get('source_session'), 'chart_data': chart},
             atr(chart['M5'][:-1]), config)

@@ -143,10 +143,10 @@ def _retest_blocker(m, symbol, plan, direction):
                                         'structure-research-26', 'structure-research-27',
                                         'structure-research-28', 'structure-research-29',
                                         'structure-research-30', 'structure-research-31',
-                                        'structure-research-32'):
+                                        'structure-research-32', 'structure-research-33'):
         return None
     if (plan.get('rule_version') in ('structure-research-31',
-                                     'structure-research-32') and
+                                     'structure-research-32', 'structure-research-33') and
             plan.get('entry_profile') == 'momentum_pullback'):
         return None
     retest_time = plan.get('retest_confirmation_time')
@@ -546,7 +546,8 @@ class MT5Adapter:
                             cost_per_lot, magic, setup_ref, plan, constraints):
         """Place one protected, risk-sized native MT5 limit with server expiry."""
         if (plan and plan.get('rule_version') in ('independent-auto-27', 'independent-auto-28',
-                                                  'independent-auto-29', 'independent-auto-30')
+                                                  'independent-auto-29', 'independent-auto-30',
+                                                  'independent-auto-31')
                 and not plan.get('limit_layers')):
             return {'accepted': False, 'status': 'blocked_independent_unverified_layer', 'send_attempted': False}
         if plan and plan.get('limit_layers'):
@@ -609,7 +610,8 @@ class MT5Adapter:
                                         'independent-auto-28', 'structure-research-29',
                                         'structure-research-30',
                                         'structure-research-31', 'structure-research-32',
-                                        'independent-auto-29', 'independent-auto-30'):
+                                        'structure-research-33', 'independent-auto-29',
+                                        'independent-auto-30', 'independent-auto-31'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(
                 plan, tick.bid, tick.ask, constraints)
@@ -844,7 +846,8 @@ class MT5Adapter:
                                         'independent-auto-28', 'structure-research-29',
                                         'structure-research-30',
                                         'structure-research-31', 'structure-research-32',
-                                        'independent-auto-29', 'independent-auto-30'):
+                                        'structure-research-33', 'independent-auto-29',
+                                        'independent-auto-30', 'independent-auto-31'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(
                 plan, tick.bid, tick.ask, constraints)
@@ -888,12 +891,14 @@ class MT5Adapter:
         if independent_blocker:
             return {'accepted': False, 'status': 'blocked_'+independent_blocker, 'send_attempted': False}
         if plan.get('rule_version') in ('independent-auto-27', 'independent-auto-28',
-                                        'independent-auto-29', 'independent-auto-30'):
+                                        'independent-auto-29', 'independent-auto-30',
+                                        'independent-auto-31'):
             protected_stop_distance = max(protected_stop_distance, float(plan['m5_atr'])*.5)
         digits = info.digits
         stop = round(float(stop), digits)
         if (plan.get('rule_version') in ('independent-auto-27', 'independent-auto-28',
-                                         'independent-auto-29', 'independent-auto-30') and
+                                         'independent-auto-29', 'independent-auto-30',
+                                         'independent-auto-31') and
                 sign*(plan['structural_invalidation']-stop) < -1e-9):
             return {'accepted': False, 'status': 'blocked_rounded_stop_inside_invalidation',
                     'send_attempted': False}
