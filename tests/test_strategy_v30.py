@@ -22,7 +22,7 @@ class Broker:
 class StrategyV30Tests(unittest.TestCase):
     def test_stronger_higher_timeframe_zone_defers_local_plan(self):
         snapshot, config = test_scan_engine.RulesTest().fixture()
-        config.update(minimum_setup_score=0, minimum_higher_timeframe_alignment=0,
+        config.update(minimum_setup_score=0, higher_timeframe_opposition_block_threshold=0,
                       minimum_ladder_reward_risk=0)
         confirmation_time = snapshot['bars']['M5'][-2]['time']
         setup = {
@@ -83,7 +83,7 @@ class StrategyV30Tests(unittest.TestCase):
 
     def test_live_plan_stop_sits_beyond_full_controlling_zone(self):
         snapshot, config = test_scan_engine.RulesTest().fixture()
-        config.update(minimum_setup_score=0, minimum_higher_timeframe_alignment=0,
+        config.update(minimum_setup_score=0, higher_timeframe_opposition_block_threshold=0,
                       minimum_ladder_reward_risk=0)
         confirmation_time = snapshot['bars']['M5'][-2]['time']
         supply = {

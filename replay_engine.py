@@ -280,7 +280,8 @@ def replay_history(snapshot, config, broker, count=5000, auto_trailing=True):
                                              'structure-research-25',
                                              'structure-research-26', 'structure-research-27',
                                              'structure-research-28', 'structure-research-29',
-                                             'structure-research-30', 'structure-research-31'):
+                                             'structure-research-30', 'structure-research-31',
+                                             'structure-research-32'):
                 from limit_ladder import ladder_quality_acceptable
                 acceptable, _, _ = ladder_quality_acceptable(
                     plan, bid, ask, config)

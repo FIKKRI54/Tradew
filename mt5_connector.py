@@ -142,9 +142,11 @@ def _retest_blocker(m, symbol, plan, direction):
                                         'structure-research-25',
                                         'structure-research-26', 'structure-research-27',
                                         'structure-research-28', 'structure-research-29',
-                                        'structure-research-30', 'structure-research-31'):
+                                        'structure-research-30', 'structure-research-31',
+                                        'structure-research-32'):
         return None
-    if (plan.get('rule_version') == 'structure-research-31' and
+    if (plan.get('rule_version') in ('structure-research-31',
+                                     'structure-research-32') and
             plan.get('entry_profile') == 'momentum_pullback'):
         return None
     retest_time = plan.get('retest_confirmation_time')
@@ -606,7 +608,7 @@ class MT5Adapter:
                                         'independent-auto-27', 'structure-research-28',
                                         'independent-auto-28', 'structure-research-29',
                                         'structure-research-30',
-                                        'structure-research-31',
+                                        'structure-research-31', 'structure-research-32',
                                         'independent-auto-29', 'independent-auto-30'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(
@@ -841,7 +843,7 @@ class MT5Adapter:
                                         'independent-auto-27', 'structure-research-28',
                                         'independent-auto-28', 'structure-research-29',
                                         'structure-research-30',
-                                        'structure-research-31',
+                                        'structure-research-31', 'structure-research-32',
                                         'independent-auto-29', 'independent-auto-30'):
             from limit_ladder import ladder_quality_acceptable
             acceptable, actual_span, required_span = ladder_quality_acceptable(

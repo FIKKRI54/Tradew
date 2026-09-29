@@ -2,11 +2,19 @@
 import math
 from decimal import Decimal, ROUND_FLOOR
 
-RULE_VERSION = 'structure-research-31'
+RULE_VERSION = 'structure-research-32'
 TIMEFRAMES = {'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600,
               'H4': 14400, 'D1': 86400}
 TIMEFRAME_WEIGHTS = {'H4': 15, 'H1': 15, 'M30': 10, 'M15': 10, 'M5': 25, 'M1': 10}
 ZONE_WEIGHTS = {'M5': 1, 'M15': 2, 'M30': 2, 'H1': 3, 'H4': 4, 'D1': 5}
+REVERSAL_PATTERNS = frozenset({
+    'bullish_engulfing', 'bearish_engulfing',
+    'bullish_rejection', 'bearish_rejection',
+    'two_soldiers', 'two_crows', 'three_soldiers', 'three_crows',
+})
+STRUCTURAL_REVERSAL_FAMILIES = frozenset({
+    'order_block_retest', 'sweep_reversal', 'rejected_retest',
+})
 
 
 def true_ranges(bars):
@@ -345,33 +353,58 @@ def overlapping_protection_zone(zones, direction, planned_zone,
     return max(candidates)[3] if candidates else None
 
 
+def m5_reversal_evidence(setup, direction=None):
+    """Return whether a completed M5 setup supplies structural reversal evidence."""
+    setup = setup or {}
+    patterns = set(setup.get('chart_patterns') or [])
+    family = setup.get('family')
+    direction = direction or setup.get('direction')
+    directional_patterns = (
+        {'bullish_engulfing', 'bullish_rejection',
+         'two_soldiers', 'three_soldiers'} if direction == 'BUY' else
+        {'bearish_engulfing', 'bearish_rejection',
+         'two_crows', 'three_crows'} if direction == 'SELL' else
+        REVERSAL_PATTERNS)
+    return bool(patterns.intersection(directional_patterns) or
+                family in STRUCTURAL_REVERSAL_FAMILIES)
+
+
+def counter_d1_risk_multiplier(contexts, direction, config):
+    """Reduce, rather than veto, a valid setup that runs against D1."""
+    expected = 'bullish' if direction == 'BUY' else 'bearish'
+    opposite = 'bearish' if expected == 'bullish' else 'bullish'
+    if contexts.get('D1', {}).get('trend') == opposite:
+        return float(config.get('counter_d1_risk_multiplier', 1))
+    return 1.0
+
+
 def context_gate(contexts, direction, setup, score, config):
-    """Hard eligibility gate; heuristic context is no longer display-only."""
+    """Reject explicit opposition while allowing mixed context and proven reversals."""
     expected = 'bullish' if direction == 'BUY' else 'bearish'
     opposite = 'bearish' if direction == 'BUY' else 'bullish'
     higher = [contexts[name].get('trend') for name in ('H4', 'H1', 'M30')]
-    aligned = sum(value == expected for value in higher)
+    opposed = sum(value == opposite for value in higher)
     failures = []
-    minimum = int(config.get('minimum_higher_timeframe_alignment', 0))
-    if aligned < minimum:
+    reversal = m5_reversal_evidence(setup, direction)
+    opposition_threshold = int(config.get(
+        'higher_timeframe_opposition_block_threshold', 2))
+    if opposition_threshold and opposed >= opposition_threshold and not reversal:
         failures.append(
-            f'higher-timeframe alignment {aligned}/3 is below {minimum}/3')
+            f'higher-timeframe opposition {opposed}/3 meets the '
+            f'{opposition_threshold}/3 blocking threshold without M5 reversal evidence')
     if score < config.get('minimum_setup_score', 0):
         failures.append(
             f'setup score {score:.0f} is below {config.get("minimum_setup_score", 0):.0f}')
-    if contexts['M15'].get('trend') == opposite:
-        failures.append('M15 development opposes the setup')
-    patterns = (setup or {}).get('chart_patterns') or []
-    named_reversal = any(label.endswith(('engulfing', 'rejection')) or
-                         label in ('two_soldiers', 'two_crows',
-                                   'three_soldiers', 'three_crows')
-                         for label in patterns)
-    if contexts['M5'].get('trend') == opposite and not named_reversal:
-        failures.append('M5 trend opposes the setup without a named reversal')
-    # D1 is a macro filter, never an entry trigger. A trade may oppose it only
-    # when M5 supplies explicit reversal evidence; M5 still owns confirmation.
-    if contexts['D1'].get('trend') == opposite and not named_reversal:
-        failures.append('D1 macro trend opposes the setup without M5 reversal evidence')
+    if contexts['M15'].get('trend') == opposite and not reversal:
+        failures.append('M15 development opposes the setup without M5 reversal evidence')
+    if contexts['M5'].get('trend') == opposite and not reversal:
+        failures.append('M5 trend opposes the setup without M5 reversal evidence')
+    # D1 remains macro context rather than an entry trigger. It becomes a hard
+    # veto only when H4 explicitly agrees with it and M5 supplies no reversal.
+    if (contexts['D1'].get('trend') == opposite and
+            contexts['H4'].get('trend') == opposite and not reversal and
+            not (opposition_threshold and opposed >= opposition_threshold)):
+        failures.append('D1 and H4 oppose the setup without M5 reversal evidence')
     return failures
 
 
@@ -433,6 +466,10 @@ def directional_score(contexts, completed, direction, setup, has_target, spread,
         expected = 'bullish' if bullish else 'bearish'
         components[tf + '_context'] = TIMEFRAME_WEIGHTS[tf] if trend == expected else (
             TIMEFRAME_WEIGHTS[tf] // 2 if trend == 'mixed' else 0)
+    d1_opposite = 'bearish' if bullish else 'bullish'
+    if contexts['D1']['trend'] == d1_opposite:
+        components['D1_macro_adjustment'] = -float(
+            config.get('counter_d1_score_penalty', 0))
     sign = 1 if bullish else -1
     m15 = completed['M15'][-1]
     recent_ranges = [b['high'] - b['low'] for b in completed['M15'][-21:-1]]
@@ -472,7 +509,8 @@ def validate(snapshot, config):
                 'confirmation_expiry_bars volatility_low_ratio volatility_high_ratio '
                 'zone_atr_fraction limit_entry_atr_fraction pattern_body_min_fraction '
                 'order_block_lookback_bars minimum_zone_strength minimum_setup_score '
-                'minimum_higher_timeframe_alignment minimum_ladder_reward_risk '
+                'higher_timeframe_opposition_block_threshold counter_d1_score_penalty '
+                'counter_d1_risk_multiplier minimum_ladder_reward_risk '
                 'minimum_ladder_span_atr_fraction minimum_ladder_span_spread_multiple '
                 'minimum_layer_stop_atr_fraction max_ladder_volume_ratio '
                 'loss_cooldown_seconds max_consecutive_losses '
@@ -498,10 +536,18 @@ def validate(snapshot, config):
     if (not isinstance(close_fraction, (int, float)) or isinstance(close_fraction, bool) or
             not 0 < close_fraction < 1):
         flags.append('Invalid take_profit_close_fraction')
-    alignment = config.get('minimum_higher_timeframe_alignment')
-    if (not isinstance(alignment, int) or isinstance(alignment, bool) or
-            not 0 <= alignment <= 3):
-        flags.append('Invalid minimum_higher_timeframe_alignment')
+    opposition = config.get('higher_timeframe_opposition_block_threshold')
+    if (not isinstance(opposition, int) or isinstance(opposition, bool) or
+            not 0 <= opposition <= 3):
+        flags.append('Invalid higher_timeframe_opposition_block_threshold')
+    d1_penalty = config.get('counter_d1_score_penalty')
+    if (not isinstance(d1_penalty, (int, float)) or isinstance(d1_penalty, bool) or
+            not 0 <= d1_penalty <= 100):
+        flags.append('Invalid counter_d1_score_penalty')
+    d1_risk = config.get('counter_d1_risk_multiplier')
+    if (not isinstance(d1_risk, (int, float)) or isinstance(d1_risk, bool) or
+            not 0 < d1_risk <= 1):
+        flags.append('Invalid counter_d1_risk_multiplier')
     a = snapshot.get('account', {})
     for key, actual in [('login', a.get('login')), ('server', a.get('server')),
                         ('currency', a.get('currency')), ('mode', snapshot.get('account_mode'))]:
@@ -796,6 +842,9 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         result['protection_zone'] = protection_zone
     result['planned_targets'] = targets
     result['planned_direction'] = direction
+    context_risk_multiplier = counter_d1_risk_multiplier(
+        result.get('structure', {}), direction, config)
+    risk_fraction = config['balance_risk_fraction'] * context_risk_multiplier
     result['entry_plan'] = {
         'rule_version': RULE_VERSION, 'setup_id': result['setup_id'],
         'symbol': snapshot['symbol'], 'direction': direction,
@@ -812,7 +861,10 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         'expires_at': (setup['confirmation_time'] +
                        (config['confirmation_expiry_bars']+2)*300 -
                        config['timestamp_offset_seconds']),
-        'risk_fraction': config['balance_risk_fraction'],
+        'risk_fraction': risk_fraction,
+        'context_risk_multiplier': context_risk_multiplier,
+        'context_risk_reason': (
+            'counter_D1_setup' if context_risk_multiplier < 1 else 'standard_context'),
         'cost_per_lot': config['cost_per_lot'],
         'm5_atr': m5_atr,
         'broker_minimum_distance': max(
@@ -849,7 +901,8 @@ def _evaluate_candidate(snapshot, config, broker, result, candidate, buffer):
         result['setup_state'] = 'FILTERED'
         result['setup_lifecycle'] = 'DETECTED'
         result['reasons'] = ['Context gate: ' + failure for failure in context_failures[:3]]
-        result['next_trigger'] = 'Wait for a new setup with aligned higher-timeframe structure and sufficient quality'
+        result['next_trigger'] = ('Wait for a new setup without excessive higher-timeframe '
+                                  'opposition, or with confirmed M5 reversal evidence')
         return result
     if stronger_zone:
         watch_zone = {

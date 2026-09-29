@@ -17,7 +17,7 @@ class EntryGatesTest(unittest.TestCase):
                  reclaimed=False, extra_setup=False, broker=None):
         snapshot, config = test_scan_engine.RulesTest().fixture()
         buy = direction == 'BUY'
-        config.update(minimum_setup_score=0, minimum_higher_timeframe_alignment=0,
+        config.update(minimum_setup_score=0, higher_timeframe_opposition_block_threshold=0,
                       minimum_ladder_reward_risk=0)
         setup = dict(direction=direction, family='breakout_follow_through',
                      level=level if level is not None else (99.95 if buy else 100.05),

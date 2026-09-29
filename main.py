@@ -100,8 +100,18 @@ def load_config():
         raise ValueError('expected_mode must be demo or live')
     if not 0 <= config.get('minimum_setup_score', -1) <= 100:
         raise ValueError('minimum_setup_score must be from 0 to 100')
-    if config.get('minimum_higher_timeframe_alignment') not in (0, 1, 2, 3):
-        raise ValueError('minimum_higher_timeframe_alignment must be an integer from 0 to 3')
+    if config.get('higher_timeframe_opposition_block_threshold') not in (0, 1, 2, 3):
+        raise ValueError('higher_timeframe_opposition_block_threshold must be an integer from 0 to 3')
+    d1_penalty = config.get('counter_d1_score_penalty')
+    if (isinstance(d1_penalty, bool) or
+            not isinstance(d1_penalty, (int, float)) or
+            not math.isfinite(d1_penalty) or not 0 <= d1_penalty <= 100):
+        raise ValueError('counter_d1_score_penalty must be from 0 to 100')
+    d1_risk = config.get('counter_d1_risk_multiplier')
+    if (isinstance(d1_risk, bool) or
+            not isinstance(d1_risk, (int, float)) or
+            not math.isfinite(d1_risk) or not 0 < d1_risk <= 1):
+        raise ValueError('counter_d1_risk_multiplier must be above 0 and at most 1')
     for key in ('minimum_ladder_reward_risk', 'minimum_layer_stop_atr_fraction',
                 'minimum_ladder_span_atr_fraction',
                 'minimum_ladder_span_spread_multiple',

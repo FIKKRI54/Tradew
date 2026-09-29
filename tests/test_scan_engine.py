@@ -7,7 +7,8 @@ from unittest.mock import patch
 from scan_engine import TIMEFRAMES, validate
 from scan_engine import (atr, pivots, floor_volume, evaluate, market_session,
                          structure, structural_zones, opposing_targets, context_gate,
-                         momentum_continuation_setup, momentum_pullback_zone)
+                         momentum_continuation_setup, momentum_pullback_zone,
+                         directional_score, counter_d1_risk_multiplier)
 
 
 def bar(i, high, low=1, close=2):
@@ -72,18 +73,60 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(reference['close'], snapshot['bars']['D1'][-2]['close'])
         self.assertIn('never an entry trigger', reference['role'])
 
-    def test_d1_conflict_requires_m5_reversal_but_never_authorizes_entry(self):
+    def test_d1_alone_is_a_modifier_but_d1_with_h4_requires_reversal(self):
         contexts = {name: {'trend': 'mixed'} for name in TIMEFRAMES}
-        contexts.update(H4={'trend': 'bullish'}, H1={'trend': 'bullish'},
+        contexts.update(H4={'trend': 'mixed'}, H1={'trend': 'mixed'},
                         M30={'trend': 'bullish'}, D1={'trend': 'bearish'})
-        config = {'minimum_higher_timeframe_alignment': 2,
-                  'minimum_setup_score': 0}
+        config = {'higher_timeframe_opposition_block_threshold': 2,
+                   'minimum_setup_score': 0}
         failures = context_gate(contexts, 'BUY', {'chart_patterns': []}, 80, config)
-        message = 'D1 macro trend opposes the setup without M5 reversal evidence'
-        self.assertIn(message, failures)
+        self.assertEqual(failures, [])
+        contexts['H4']['trend'] = 'bearish'
+        message = 'D1 and H4 oppose the setup without M5 reversal evidence'
+        self.assertIn(message, context_gate(
+            contexts, 'BUY', {'chart_patterns': []}, 80, config))
         reversed_failures = context_gate(
-            contexts, 'BUY', {'chart_patterns': ['bullish_rejection']}, 80, config)
+            contexts, 'BUY', {'family': 'order_block_retest',
+                              'chart_patterns': []}, 80, config)
         self.assertNotIn(message, reversed_failures)
+
+    def test_two_explicit_higher_timeframe_opponents_block_without_reversal(self):
+        contexts = {name: {'trend': 'mixed'} for name in TIMEFRAMES}
+        contexts.update(H4={'trend': 'bearish'}, H1={'trend': 'bearish'},
+                        M30={'trend': 'mixed'}, D1={'trend': 'bullish'})
+        config = {'higher_timeframe_opposition_block_threshold': 2,
+                  'minimum_setup_score': 0}
+        message = ('higher-timeframe opposition 2/3 meets the 2/3 blocking '
+                   'threshold without M5 reversal evidence')
+        self.assertIn(message, context_gate(
+            contexts, 'BUY', {'family': 'breakout_follow_through',
+                              'chart_patterns': []}, 80, config))
+        self.assertNotIn(message, context_gate(
+            contexts, 'BUY', {'family': 'sweep_reversal',
+                              'chart_patterns': []}, 80, config))
+
+    def test_counter_d1_setup_reduces_score_and_risk_instead_of_vetoing(self):
+        contexts = {
+            name: {'trend': 'mixed', 'volatility_regime': 'normal'}
+            for name in TIMEFRAMES
+        }
+        contexts['D1']['trend'] = 'bearish'
+        completed = {
+            'M15': [dict(open=100, high=102, low=99, close=101) for _ in range(21)],
+            'M1': [dict(open=100, high=101, low=99, close=100),
+                   dict(open=100, high=102, low=99.5, close=101.5)],
+        }
+        config = {'max_spread': 1, 'counter_d1_score_penalty': 5,
+                  'counter_d1_risk_multiplier': 2/3}
+        components = directional_score(
+            contexts, completed, 'BUY',
+            {'family': 'order_block_retest', 'chart_patterns': []},
+            True, .2, config)
+        self.assertEqual(components['D1_macro_adjustment'], -5)
+        self.assertAlmostEqual(
+            counter_d1_risk_multiplier(contexts, 'BUY', config), 2/3)
+        self.assertEqual(
+            counter_d1_risk_multiplier(contexts, 'SELL', config), 1)
 
     def test_pending_orders_prevent_new_entry(self):
         snapshot, config = self.fixture()
@@ -460,7 +503,7 @@ class RulesTest(unittest.TestCase):
 
     def test_rule_version_identifies_native_pending_logic(self):
         from scan_engine import RULE_VERSION
-        self.assertEqual(RULE_VERSION, 'structure-research-31')
+        self.assertEqual(RULE_VERSION, 'structure-research-32')
 
     def test_terminal_setup_cannot_resurrect(self):
         from setup_tracker import SetupTracker
@@ -693,7 +736,7 @@ class RulesTest(unittest.TestCase):
     def test_completed_displacement_arms_shallow_momentum_limit_without_m1_retest(self):
         snapshot, config = self.fixture()
         config.update(minimum_setup_score=0,
-                      minimum_higher_timeframe_alignment=2,
+                      higher_timeframe_opposition_block_threshold=2,
                       minimum_ladder_reward_risk=.2)
         latest = snapshot['bars']['M5'][-2]
         latest.update(open=98.8, high=100.5, low=98.5, close=100.4)

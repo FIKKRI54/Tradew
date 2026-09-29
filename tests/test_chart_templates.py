@@ -136,7 +136,7 @@ class ChartTemplateTests(unittest.TestCase):
         self.assertFalse(any(item['family'] == 'order_block_retest'
                              for item in self.find(candles)))
 
-    def test_evaluator_builds_sweep_plan_but_applies_context_gate(self):
+    def test_evaluator_accepts_sweep_as_context_reversal_evidence(self):
         from scan_engine import evaluate
         from test_scan_engine import RulesTest
         from test_entry_gates import Broker
@@ -147,10 +147,11 @@ class ChartTemplateTests(unittest.TestCase):
         snapshot['bars']['M5'][-2].update(open=98.4, high=99.2, low=97.5, close=98.9)
         decision = evaluate(snapshot, config, Broker())
         self.assertEqual(decision['setup_family'], 'sweep_reversal')
-        self.assertEqual(decision['setup_state'], 'FILTERED')
+        self.assertNotEqual(decision['setup_state'], 'FILTERED')
         self.assertEqual(decision['planned_direction'], 'BUY')
-        self.assertEqual(decision['entry_plan']['setup_family'], 'sweep_reversal')
-        self.assertTrue(decision['entry_plan']['limit_layers'])
+        self.assertFalse(any('Context gate:' in reason
+                             for reason in decision['reasons']))
+        self.assertIsNotNone(decision.get('watch_entry_zone'))
 
     def test_two_rising_candles_without_structure_are_not_a_setup(self):
         candles = bars()
