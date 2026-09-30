@@ -10,14 +10,14 @@ const ENTRY_OPTIONS = [
 ]
 const PROVIDER_OPTIONS = [
   { value: 'gemini', label: 'Gemini' },
-  { value: 'astra', label: 'Astra High' },
+  { value: 'astra', label: 'Sol 6.1 High' },
 ]
 const RISK_TIER_PERCENT = { LOW: 10, MEDIUM: 20, HIGH: 30 }
 const fmt = (n, digits = 2) => Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }) : '—'
 const aiResultProviderLabel = result => {
   if (result?.selected_provider !== 'astra') return 'GEMINI / GOOGLE'
   const output = result.analysis || result.review || {}
-  const model = output.model === 'gpt-6-luna' ? 'LUNA' : output.model === 'gpt-6-astra' ? 'ASTRA' : output.model?.toUpperCase() || 'CODEX'
+  const model = output.model === 'gpt-6.1-sol' ? 'SOL 6.1' : output.model === 'gpt-6-luna' ? 'LUNA' : output.model === 'gpt-6-astra' ? 'ASTRA' : output.model?.toUpperCase() || 'CODEX'
   return `${model}${output.reasoning_effort ? ` ${output.reasoning_effort.toUpperCase()}` : ''} / CODEX CLI`
 }
 const proposalInstruction = change => {
@@ -397,7 +397,7 @@ export default function App() {
       <header className="topbar">
         <div className="topbar-intro">
           <div className="brand"><span className="eyebrow">TRADEW</span><h1>Gold overview<span className="tiny-badge">XAU / USD</span></h1></div>
-          <span className="connection" role="status"><i className={busy || executionSettings.paused ? 'dim' : ''} />{executionSettings.paused ? 'Automation paused · protection active' : busy ? 'Data Refresh' : autoAiBusy ? `${d?.automation?.automatic_provider === 'astra' ? 'Astra High' : 'Gemini'} analysis running` : 'Live scanner · 1s target'}</span>
+          <span className="connection" role="status"><i className={busy || executionSettings.paused ? 'dim' : ''} />{executionSettings.paused ? 'Automation paused · protection active' : busy ? 'Data Refresh' : autoAiBusy ? `${d?.automation?.automatic_provider === 'astra' ? 'Sol 6.1 High' : 'Gemini'} analysis running` : 'Live scanner · 1s target'}</span>
         </div>
         <div className="top-actions" aria-label="Scan controls">
           <section className="control-group" aria-label="Automation settings">
@@ -417,7 +417,7 @@ export default function App() {
             <div className="control-group-heading"><span>02 / ON-DEMAND ANALYSIS</span><span>MANUAL</span></div>
             <div className="reviewer-select"><ControlMenu label="Reviewer" value={aiProvider} options={PROVIDER_OPTIONS} onChange={setAiProvider} /></div>
             <div className="control-grid control-grid-actions">
-              <button className="control-action" onClick={reviewWithAi} disabled={aiBusy || independentBusy || !decision?.snapshot_id}><Icon name="shield" size={16} /><span>{aiBusy ? 'Reviewing…' : `Review with ${aiProvider === 'astra' ? 'Astra High' : 'Gemini'}`}</span></button>
+              <button className="control-action" onClick={reviewWithAi} disabled={aiBusy || independentBusy || !decision?.snapshot_id}><Icon name="shield" size={16} /><span>{aiBusy ? 'Reviewing…' : `Review with ${aiProvider === 'astra' ? 'Sol 6.1 High' : 'Gemini'}`}</span></button>
               <button className="control-action control-action-emphasis" onClick={analyzeIndependently} disabled={independentBusy || aiBusy || !decision?.snapshot_id}><Icon name="scan" size={16} /><span>{independentBusy ? 'Analyzing…' : 'Independent scan'}</span></button>
             </div>
           </section>
