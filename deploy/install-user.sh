@@ -74,4 +74,8 @@ if [ -s "$BASE/current/vps_gemini_reviewer.py" ] && [ -d "$HOME/tradew-gemini" ]
 fi
 systemctl --user daemon-reload
 
+if [ -d /var/www/tradew ]; then
+  bash "$BASE/current/deploy/publish-frontend.sh" "$BASE/current"
+fi
+
 echo "Installed Tradew release $RELEASE"
